@@ -432,6 +432,22 @@
     html.dark .bg-red-50\/40 {
       background-color: rgba(249, 115, 22, 0.08) !important;
     }
+    /* Perbaiki latar belakang utama (kanvas kanan) & mobile header di Dark Mode */
+    html.dark,
+    html.dark body,
+    html.dark #app-screen,
+    html.dark main,
+    html.dark .bg-swiss-paper {
+      background-color: var(--bg-canvas) !important;
+      color: var(--ink-primary) !important;
+    }
+    html.dark header {
+      background-color: var(--bg-surface) !important;
+      border-color: var(--border-soft) !important;
+    }
+    html.dark .border-swiss-ink {
+      border-color: var(--border-strong) !important;
+    }
     html.dark ::-webkit-scrollbar-thumb { background: #383832; }
   </style>
 </head>
