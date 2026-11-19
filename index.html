@@ -551,6 +551,9 @@
             <button onclick="exportPriceAnalysisCSV()" class="bg-swiss-ink text-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-red">
               Export CSV
             </button>
+            <button onclick="exportAllPurchasesByItemCSV()" class="border border-swiss-ink bg-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-ink hover:text-white">
+              Export Riwayat Beli (CSV)
+            </button>
           </div>
         </div>
 
@@ -604,9 +607,14 @@
               <p class="font-mono text-[10px] uppercase tracking-widest text-swiss-red font-semibold">Perbandingan Lintas Supplier</p>
               <h3 id="price-detail-title" class="text-lg font-extrabold uppercase"></h3>
             </div>
-            <button onclick="closePriceDetail()" class="border border-swiss-ink px-3 py-1.5 text-xs font-mono font-bold hover:bg-swiss-red hover:text-white self-start sm:self-auto">
-              Tutup ✕
-            </button>
+            <div class="flex flex-wrap gap-2 self-start sm:self-auto no-print">
+              <button onclick="exportItemPurchaseHistoryCSV()" class="bg-swiss-ink text-white px-3 py-1.5 text-xs font-mono font-semibold hover:bg-swiss-red">
+                Export Riwayat Item (CSV)
+              </button>
+              <button onclick="closePriceDetail()" class="border border-swiss-ink px-3 py-1.5 text-xs font-mono font-bold hover:bg-swiss-red hover:text-white">
+                Tutup ✕
+              </button>
+            </div>
           </div>
 
           <!-- Ranking Supplier -->
