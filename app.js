@@ -2823,5 +2823,201 @@ function initCursorEffects() {
 
 initTheme();
 initCursorEffects();
+// ==========================================
+// 13. IKON OTOMATIS & COMMAND PALETTE (CTRL+K)
+// ==========================================
+function injectSidebarIcons() {
+  const iconMap = {
+    dashboard: 'layout-grid',
+    transactions: 'arrow-left-right',
+    items: 'package',
+    stockopname: 'clipboard-check',
+    reports: 'history',
+    recap: 'bar-chart-3',
+    prices: 'tags',
+    pricing: 'trending-up',
+    master: 'users',
+    settings: 'sliders'
+  };
+
+  document.querySelectorAll('.nav-btn[data-tab]').forEach(btn => {
+    if (btn.querySelector('[data-lucide]')) return;
+    const iconName = iconMap[btn.dataset.tab];
+    if (!iconName) return;
+
+    btn.classList.remove('justify-between');
+    btn.classList.add('gap-2.5');
+
+    const iconEl = document.createElement('i');
+    iconEl.setAttribute('data-lucide', iconName);
+    iconEl.className = 'lucide-nav';
+    btn.prepend(iconEl);
+  });
+
+  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+    window.lucide.createIcons();
+  }
+}
+
+let cmdSelectedIndex = 0;
+let cmdCurrentActions = [];
+
+function ensureCommandPaletteDOM() {
+  if (document.getElementById('cmd-palette')) return;
+  const el = document.createElement('div');
+  el.id = 'cmd-palette';
+  el.innerHTML = `
+    <div class="cmd-box" onclick="event.stopPropagation()">
+      <div class="cmd-input-wrap">
+        <span class="font-mono text-xs font-bold text-swiss-red">&gt;_</span>
+        <input id="cmd-search-input" type="text" placeholder="Ketik nama menu, aksi, atau cari stok barang..." oninput="renderCommandResults()" />
+        <span class="cmd-kbd">ESC</span>
+      </div>
+      <div id="cmd-results"></div>
+    </div>
+  `;
+  el.addEventListener('click', closeCommandPalette);
+  document.body.appendChild(el);
+
+  document.getElementById('cmd-search-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeCommandPalette();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (cmdCurrentActions.length > 0) {
+        cmdSelectedIndex = (cmdSelectedIndex + 1) % cmdCurrentActions.length;
+        highlightCommandItem();
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (cmdCurrentActions.length > 0) {
+        cmdSelectedIndex = (cmdSelectedIndex - 1 + cmdCurrentActions.length) % cmdCurrentActions.length;
+        highlightCommandItem();
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const chosen = cmdCurrentActions[cmdSelectedIndex];
+      if (chosen) chosen.run();
+    }
+  });
+}
+
+function openCommandPalette() {
+  if (document.getElementById('app-screen')?.classList.contains('hidden')) return;
+  ensureCommandPaletteDOM();
+  const palette = document.getElementById('cmd-palette');
+  const input = document.getElementById('cmd-search-input');
+  cmdSelectedIndex = 0;
+  input.value = '';
+  palette.classList.add('open');
+  renderCommandResults();
+  setTimeout(() => input.focus(), 20);
+}
+
+function closeCommandPalette() {
+  document.getElementById('cmd-palette')?.classList.remove('open');
+}
+
+function buildCommandList(query) {
+  const q = (query || '').trim().toLowerCase();
+
+  const navItems = [
+    { group: 'Navigasi Cepat', label: '01 / Dashboard', meta: 'Ringkasan & Grafik', run: () => { switchTab('dashboard'); closeCommandPalette(); } },
+    { group: 'Navigasi Cepat', label: '02 / Transaksi & Nota', meta: 'Masuk, Keluar, Opname', run: () => { switchTab('transactions'); closeCommandPalette(); } },
+    { group: 'Navigasi Cepat', label: '03 / Master Barang', meta: 'Kelola SKU & Satuan', run: () => { switchTab('items'); closeCommandPalette(); } },
+    { group: 'Navigasi Cepat', label: '04 / Stock Opname', meta: 'Blind Count & Draft', run: () => { switchTab('stockopname'); loadStockOpname(); closeCommandPalette(); } },
+    { group: 'Navigasi Cepat', label: '05 / Kartu Stok & Arsip', meta: 'Mutasi & Foto Nota', run: () => { switchTab('reports'); loadStockCard(); renderReceiptGallery(); closeCommandPalette(); } },
+    { group: 'Navigasi Cepat', label: '06 / Rekap Divisi & Supplier', meta: 'Belanja & Pemakaian', run: () => { switchTab('recap'); loadRecapData(); closeCommandPalette(); } },
+    { group: 'Navigasi Cepat', label: '07 / Analisa Harga', meta: 'Bandingkan Supplier', run: () => { switchTab('prices'); loadPriceAnalysis(); closeCommandPalette(); } },
+    { group: 'Navigasi Cepat', label: '08 / Harga & Laba', meta: 'Kontrak & Margin', run: () => { switchTab('pricing'); loadPricingAndProfit(); closeCommandPalette(); } },
+    { group: 'Navigasi Cepat', label: '09 / Kategori & Partner', meta: 'Master Relasi', run: () => { switchTab('master'); closeCommandPalette(); } },
+    { group: 'Navigasi Cepat', label: '10 / Pengaturan', meta: 'White-Label & Drive', run: () => { switchTab('settings'); closeCommandPalette(); } }
+  ];
+
+  const quickActions = [
+    { group: 'Aksi Cepat', label: '+ Tambah Barang Baru', meta: 'Modal Master', run: () => { switchTab('items'); openItemModal(); closeCommandPalette(); } },
+    { group: 'Aksi Cepat', label: '↑ Import Massal Master Barang', meta: 'Excel / CSV', run: () => { switchTab('items'); openImportModal(); closeCommandPalette(); } },
+    { group: 'Aksi Cepat', label: '◐ Ganti Light / Dark Mode', meta: 'Tema UI', run: () => { toggleDarkMode(); closeCommandPalette(); } }
+  ];
+
+  const stockMatches = q
+    ? (state.items || [])
+        .filter(i => i.name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q))
+        .slice(0, 6)
+        .map(i => ({
+          group: 'Cek Stok Instan',
+          label: `[${i.sku}] ${i.name}`,
+          meta: `Stok: ${formatStockPlain(i)}`,
+          run: () => {
+            switchTab('reports');
+            const sel = document.getElementById('report-item-select');
+            if (sel) { sel.value = i.id; loadStockCard(); }
+            closeCommandPalette();
+          }
+        }))
+    : [];
+
+  const all = [...navItems, ...quickActions, ...stockMatches];
+  if (!q) return all;
+
+  return all.filter(item =>
+    item.group === 'Cek Stok Instan' ||
+    item.label.toLowerCase().includes(q) ||
+    item.meta.toLowerCase().includes(q)
+  );
+}
+
+function renderCommandResults() {
+  const q = document.getElementById('cmd-search-input')?.value || '';
+  cmdCurrentActions = buildCommandList(q);
+  cmdSelectedIndex = 0;
+
+  const container = document.getElementById('cmd-results');
+  if (!container) return;
+
+  if (cmdCurrentActions.length === 0) {
+    container.innerHTML = '<div class="p-6 text-center font-mono text-xs text-swiss-muted">Tidak ada hasil yang cocok.</div>';
+    return;
+  }
+
+  let html = '';
+  let lastGroup = '';
+  cmdCurrentActions.forEach((act, idx) => {
+    if (act.group !== lastGroup) {
+      lastGroup = act.group;
+      html += `<div class="cmd-group-label">${escapeHtml(act.group)}</div>`;
+    }
+    html += `
+      <div class="cmd-item ${idx === cmdSelectedIndex ? 'selected' : ''}" data-cmd-idx="${idx}" onclick="cmdCurrentActions[${idx}].run()">
+        <span>${escapeHtml(act.label)}</span>
+        <span class="cmd-kbd">${escapeHtml(act.meta)}</span>
+      </div>
+    `;
+  });
+  container.innerHTML = html;
+}
+
+function highlightCommandItem() {
+  const items = document.querySelectorAll('#cmd-results .cmd-item');
+  items.forEach((el, idx) => {
+    const active = idx === cmdSelectedIndex;
+    el.classList.toggle('selected', active);
+    if (active) el.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    const palette = document.getElementById('cmd-palette');
+    if (palette && palette.classList.contains('open')) {
+      closeCommandPalette();
+    } else {
+      openCommandPalette();
+    }
+  }
+});
+
+injectSidebarIcons();
 // Mulai aplikasi
 checkSession();
