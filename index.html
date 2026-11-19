@@ -45,6 +45,237 @@
       body { background: #FFFFFF; }
     }
   </style>
+  <!-- NEO-SWISS MODERN UI UPGRADE -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg-canvas: #F5F5F2;
+      --bg-surface: #FFFFFF;
+      --ink-primary: #141413;
+      --ink-muted: #6B6B66;
+      --border-soft: #E4E4DF;
+      --border-strong: #D0D0C8;
+      --accent-orange: #EA580C;
+      --accent-orange-soft: #FFF4ED;
+      --accent-green: #059669;
+    }
+
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif !important;
+      background-color: var(--bg-canvas) !important;
+      color: var(--ink-primary) !important;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .font-mono {
+      font-family: 'JetBrains Mono', monospace !important;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Layar Login: Pola Swiss Dot-Grid Modern */
+    #login-screen {
+      background-color: var(--bg-canvas) !important;
+      background-image: radial-gradient(#D4D4CE 1px, transparent 1px) !important;
+      background-size: 22px 22px !important;
+    }
+    #login-screen > div {
+      background: rgba(255, 255, 255, 0.96) !important;
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border-strong) !important;
+      border-radius: 14px !important;
+      box-shadow: 0 20px 45px -12px rgba(20, 20, 19, 0.10), 0 4px 12px -2px rgba(20, 20, 19, 0.04) !important;
+    }
+
+    /* Sidebar Modern */
+    #sidebar {
+      background-color: #FFFFFF !important;
+      border-right: 1px solid var(--border-soft) !important;
+      box-shadow: 2px 0 12px rgba(0, 0, 0, 0.02);
+    }
+
+    /* Navigasi Sidebar: Pill + Garis Aksen Oranye */
+    .nav-btn {
+      border-radius: 8px !important;
+      margin-bottom: 2px;
+      color: #4A4A46;
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+    }
+    .nav-btn:hover {
+      background-color: #F4F4F0 !important;
+      color: var(--ink-primary) !important;
+      transform: translateX(2px);
+    }
+    .nav-btn.active {
+      background-color: var(--ink-primary) !important;
+      color: #FFFFFF !important;
+      box-shadow: 0 4px 12px rgba(20, 20, 19, 0.14);
+    }
+    .nav-btn.active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 22%;
+      height: 56%;
+      width: 3px;
+      background-color: var(--accent-orange);
+      border-radius: 0 3px 3px 0;
+    }
+
+    /* Haluskan Garis & Kartu (Elevation) */
+    .border-swiss-ink,
+    .border-2.border-swiss-ink {
+      border-color: var(--border-strong) !important;
+      border-width: 1px !important;
+    }
+    .border-swiss-line {
+      border-color: var(--border-soft) !important;
+    }
+
+    /* Kartu Putih Mengambang */
+    main .bg-white.border,
+    main .bg-white.border-2 {
+      border-radius: 12px !important;
+      border: 1px solid var(--border-soft) !important;
+      box-shadow: 0 1px 3px rgba(20, 20, 19, 0.04), 0 4px 12px rgba(20, 20, 19, 0.02) !important;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+
+    /* Efek Hover Halus pada Kartu KPI */
+    .grid > .bg-white.p-4:hover {
+      transform: translateY(-2px);
+      border-color: var(--border-strong) !important;
+      box-shadow: 0 10px 24px -8px rgba(20, 20, 19, 0.09) !important;
+    }
+
+    /* Header Bagian (Section Title) */
+    section > .border-b-2 {
+      border-bottom: 1px solid var(--border-strong) !important;
+      padding-bottom: 1rem;
+    }
+    section h2 {
+      letter-spacing: -0.025em !important;
+    }
+
+    /* Palet Aksen Oranye (International Orange) & Hijau */
+    .bg-swiss-red {
+      background-color: var(--accent-orange) !important;
+    }
+    .text-swiss-red {
+      color: var(--accent-orange) !important;
+    }
+    .border-swiss-red {
+      border-color: var(--accent-orange) !important;
+    }
+    .hover\:bg-swiss-red:hover {
+      background-color: var(--accent-orange) !important;
+      border-color: var(--accent-orange) !important;
+    }
+    .bg-swiss-ink {
+      background-color: var(--ink-primary) !important;
+    }
+    .text-swiss-muted {
+      color: var(--ink-muted) !important;
+    }
+
+    /* Tombol Modern & Taktil */
+    button:not(.nav-btn):not(.underline),
+    a.bg-swiss-ink,
+    label.border {
+      border-radius: 8px !important;
+      transition: all 0.16s ease !important;
+    }
+    button.bg-swiss-ink:hover,
+    button.bg-swiss-red:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 14px -4px rgba(234, 88, 12, 0.35);
+    }
+    button:active {
+      transform: translateY(0) !important;
+    }
+
+    /* Input & Dropdown Modern */
+    .swiss-input,
+    input[type="text"],
+    input[type="number"],
+    input[type="email"],
+    input[type="password"],
+    input[type="date"],
+    input[type="month"],
+    select,
+    textarea {
+      border: 1px solid var(--border-strong) !important;
+      border-radius: 8px !important;
+      background-color: #FFFFFF !important;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+    }
+    .swiss-input:focus,
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: none !important;
+      border-color: var(--accent-orange) !important;
+      box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.14) !important;
+    }
+
+    /* Tabel Modern & Rapi */
+    table thead {
+      background-color: #FAF9F6 !important;
+      border-bottom: 1px solid var(--border-soft) !important;
+    }
+    table tbody tr {
+      transition: background-color 0.12s ease;
+    }
+    table tbody tr:hover {
+      background-color: #FAF9F5 !important;
+    }
+
+    /* Badge Status lebih Modern (MASUK = Hijau, KELUAR = Oranye) */
+    span.bg-swiss-ink.uppercase {
+      background-color: #ECFDF5 !important;
+      color: var(--accent-green) !important;
+      border: 1px solid #A7F3D0 !important;
+      border-radius: 999px !important;
+      font-weight: 600 !important;
+      padding: 2px 8px !important;
+    }
+    span.bg-swiss-red.uppercase {
+      background-color: var(--accent-orange-soft) !important;
+      color: var(--accent-orange) !important;
+      border: 1px solid #FDBA74 !important;
+      border-radius: 999px !important;
+      font-weight: 600 !important;
+      padding: 2px 8px !important;
+    }
+
+    /* Animasi Halus Saat Pindah Tab */
+    .tab-section:not(.hidden) {
+      animation: swissFadeIn 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes swissFadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Modal lebih Elegan */
+    [id^="modal-"] > div {
+      border-radius: 14px !important;
+      border: 1px solid var(--border-strong) !important;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.22) !important;
+    }
+    [id^="modal-"] {
+      backdrop-filter: blur(4px);
+    }
+
+    /* Scrollbar Minimalis */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #D4D4CE; border-radius: 999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #A8A8A0; }
+  </style>
 </head>
 <body class="antialiased selection:bg-swiss-red selection:text-white">
 
