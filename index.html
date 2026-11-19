@@ -538,6 +538,12 @@
             <button onclick="loadPriceAnalysis()" class="border border-swiss-ink bg-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-ink hover:text-white">
               ↻ Muat Ulang
             </button>
+            <select id="filter-price-range" onchange="loadPriceAnalysis()" class="swiss-input py-2 text-xs font-mono w-auto">
+              <option value="30">30 Hari Terakhir</option>
+              <option value="60">60 Hari Terakhir</option>
+              <option value="90">90 Hari Terakhir</option>
+              <option value="ALL">Semua Waktu</option>
+            </select>
             <button onclick="exportPriceAnalysisCSV()" class="bg-swiss-ink text-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-red">
               Export CSV
             </button>
