@@ -6,6 +6,7 @@
   <title>Sistem Inventaris ATK</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -319,9 +320,14 @@
             <p class="font-mono text-xs uppercase tracking-widest text-swiss-muted">03 — Katalog & Konversi Satuan</p>
             <h2 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight">Master Barang</h2>
           </div>
-          <button onclick="openItemModal()" class="bg-swiss-ink text-white px-4 py-2.5 text-xs font-semibold uppercase tracking-wider hover:bg-swiss-red transition-colors">
-            + Tambah Barang Baru
-          </button>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="openImportModal()" class="border border-swiss-ink bg-white text-swiss-ink px-4 py-2.5 text-xs font-semibold uppercase tracking-wider hover:bg-swiss-ink hover:text-white transition-colors">
+              ↑ Import Excel / CSV
+            </button>
+            <button onclick="openItemModal()" class="bg-swiss-ink text-white px-4 py-2.5 text-xs font-semibold uppercase tracking-wider hover:bg-swiss-red transition-colors">
+              + Tambah Barang Baru
+            </button>
+          </div>
         </div>
 
         <div class="flex flex-col sm:flex-row gap-3">
@@ -554,7 +560,63 @@
       </div>
     </div>
   </div>
+<!-- ================= MODAL IMPORT EXCEL / CSV ================= -->
+  <div id="modal-import-items" class="hidden fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4">
+    <div class="bg-white border-2 border-swiss-ink w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6 space-y-5">
+      <div class="flex items-center justify-between border-b-2 border-swiss-ink pb-3">
+        <div>
+          <p class="font-mono text-[10px] uppercase tracking-widest text-swiss-muted">Bulk Upload</p>
+          <h3 class="font-extrabold text-sm uppercase tracking-wider">Import Master Barang (Excel / CSV)</h3>
+        </div>
+        <button onclick="closeImportModal()" class="font-mono text-sm font-bold px-2">✕</button>
+      </div>
 
+      <div class="bg-neutral-50 border border-swiss-line p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div class="text-xs space-y-1">
+          <p class="font-semibold">1. Unduh template Excel agar nama kolom otomatis cocok.</p>
+          <p class="text-[11px] text-swiss-muted font-mono">Kolom wajib: SKU, NAMA_BARANG, SATUAN_TERKECIL. Kategori baru akan dibuat otomatis.</p>
+        </div>
+        <button type="button" onclick="downloadImportTemplate()" class="shrink-0 border border-swiss-ink bg-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-ink hover:text-white">
+          ↓ Download Template (.xlsx)
+        </button>
+      </div>
+
+      <div>
+        <label class="block font-mono text-[11px] uppercase mb-1.5">2. Pilih File Excel (.xlsx / .xls) atau CSV</label>
+        <input type="file" id="import-file-input" accept=".xlsx,.xls,.csv" onchange="handleImportFile(event)"
+          class="swiss-input text-xs file:mr-3 file:py-1.5 file:px-3 file:border file:border-swiss-ink file:bg-neutral-100 file:text-xs file:font-mono" />
+      </div>
+
+      <div id="import-preview-wrapper" class="hidden space-y-3">
+        <div class="flex items-center justify-between">
+          <p id="import-summary-text" class="font-mono text-xs font-semibold"></p>
+          <span class="font-mono text-[10px] text-swiss-muted">Menampilkan maks. 10 baris pertama</span>
+        </div>
+        <div class="overflow-x-auto border border-swiss-line max-h-60">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-neutral-50 border-b border-swiss-line font-mono text-[10px] uppercase">
+              <tr>
+                <th class="p-2">SKU</th>
+                <th class="p-2">Nama Barang</th>
+                <th class="p-2">Kategori</th>
+                <th class="p-2">Satuan Base</th>
+                <th class="p-2">Konversi</th>
+              </tr>
+            </thead>
+            <tbody id="import-preview-body" class="divide-y divide-swiss-line"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-3 border-t border-swiss-line">
+        <button type="button" onclick="closeImportModal()" class="border border-swiss-ink px-4 py-2 text-xs font-semibold uppercase">Batal</button>
+        <button type="button" id="btn-run-import" onclick="executeBulkImport()" disabled
+          class="bg-swiss-red text-white px-5 py-2 text-xs font-bold uppercase hover:bg-swiss-ink disabled:opacity-40 disabled:cursor-not-allowed">
+          Mulai Import ke Database
+        </button>
+      </div>
+    </div>
+  </div>
   <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
