@@ -1779,9 +1779,12 @@ function renderPriceAnalysisTable() {
   `).join('');
 }
 
+let selectedPriceItem = null;
+
 function openPriceDetail(itemId) {
   const entry = priceAnalysisList.find(x => x.itemId === itemId);
   if (!entry) return;
+  selectedPriceItem = entry;
 
   document.getElementById('price-detail-title').textContent = `[${entry.sku}] ${entry.name} — Per ${entry.base_unit}`;
 
@@ -1817,6 +1820,7 @@ function openPriceDetail(itemId) {
 }
 
 function closePriceDetail() {
+  selectedPriceItem = null;
   document.getElementById('price-detail-panel')?.classList.add('hidden');
 }
 
@@ -1832,6 +1836,39 @@ function exportPriceAnalysisCSV() {
     x.gapPct.toFixed(1) + '%'
   ]);
   downloadCSV(`Analisa_Harga_Supplier_${new Date().toISOString().split('T')[0]}.csv`, [header, ...rows]);
+}
+
+function exportItemPurchaseHistoryCSV() {
+  if (!selectedPriceItem || selectedPriceItem.history.length === 0) {
+    return showToast('Pilih barang terlebih dahulu.', 'error');
+  }
+  const x = selectedPriceItem;
+  const header = ['SKU', 'Nama Barang', 'Tanggal', 'No Bukti', 'Supplier', 'Qty & Satuan Nota', 'Satuan Base', 'Harga / Base (Rp)', 'Total Nota Baris (Rp)'];
+  const rows = x.history.map(h => [
+    x.sku, x.name, h.date, h.refNo, h.supplierName, h.inputLabel, x.base_unit, Math.round(h.basePrice), Math.round(h.subtotal)
+  ]);
+  const safeSku = x.sku.replace(/[^a-zA-Z0-9-_]/g, '_');
+  downloadCSV(`Riwayat_Pembelian_${safeSku}_${new Date().toISOString().split('T')[0]}.csv`, [header, ...rows]);
+}
+
+function exportAllPurchasesByItemCSV() {
+  if (priceAnalysisList.length === 0) {
+    return showToast('Belum ada data pembelian pada rentang waktu ini.', 'error');
+  }
+  const rangeVal = document.getElementById('filter-price-range')?.value || '30';
+  const sortedItems = [...priceAnalysisList].sort((a, b) => a.name.localeCompare(b.name));
+  const header = ['SKU', 'Nama Barang', 'Tanggal', 'No Bukti', 'Supplier', 'Qty & Satuan Nota', 'Satuan Base', 'Harga / Base (Rp)', 'Total Nota Baris (Rp)'];
+  const rows = [];
+
+  sortedItems.forEach(x => {
+    x.history.forEach(h => {
+      rows.push([
+        x.sku, x.name, h.date, h.refNo, h.supplierName, h.inputLabel, x.base_unit, Math.round(h.basePrice), Math.round(h.subtotal)
+      ]);
+    });
+  });
+
+  downloadCSV(`Daftar_Pembelian_Per_Item_${rangeVal === 'ALL' ? 'Semua' : rangeVal + 'Hari'}_${new Date().toISOString().split('T')[0]}.csv`, [header, ...rows]);
 }
 
 // ==========================================
