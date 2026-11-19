@@ -123,6 +123,9 @@
           <button onclick="switchTab('recap'); loadRecapData();" data-tab="recap" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
             <span>04B / Rekap Divisi & Toko</span>
           </button>
+          <button onclick="switchTab('prices'); loadPriceAnalysis();" data-tab="prices" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
+            <span>04C / Analisa Harga</span>
+          </button>
           <button onclick="switchTab('master')" data-tab="master" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
             <span>05 / Kategori & Partner</span>
           </button>
@@ -521,6 +524,119 @@
               </thead>
               <tbody id="recap-detail-body" class="divide-y divide-swiss-line"></tbody>
             </table>
+          </div>
+        </div>
+      </section>
+      <!-- ============ TAB 4C: ANALISA PERBANDINGAN HARGA SUPPLIER ============ -->
+      <section id="tab-prices" class="tab-section hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-end justify-between border-b-2 border-swiss-ink pb-4 gap-3">
+          <div>
+            <p class="font-mono text-xs uppercase tracking-widest text-swiss-muted">04C — Inteligensi Belanja</p>
+            <h2 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight">Analisa Harga Supplier</h2>
+          </div>
+          <div class="flex flex-wrap gap-2 no-print">
+            <button onclick="loadPriceAnalysis()" class="border border-swiss-ink bg-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-ink hover:text-white">
+              ↻ Muat Ulang
+            </button>
+            <button onclick="exportPriceAnalysisCSV()" class="bg-swiss-ink text-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-red">
+              Export CSV
+            </button>
+          </div>
+        </div>
+
+        <!-- KPI Ringkasan -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="bg-white border border-swiss-ink p-4">
+            <p class="font-mono text-[11px] uppercase text-swiss-muted">Barang Memiliki Data Harga</p>
+            <p id="price-kpi-total" class="text-3xl font-extrabold font-mono mt-1">0</p>
+          </div>
+          <div class="bg-white border border-swiss-ink p-4">
+            <p class="font-mono text-[11px] uppercase text-swiss-muted">Bisa Dibandingkan (≥ 2 Toko)</p>
+            <p id="price-kpi-comparable" class="text-3xl font-extrabold font-mono mt-1">0</p>
+          </div>
+          <div class="bg-white border border-swiss-ink p-4">
+            <p class="font-mono text-[11px] uppercase text-swiss-red font-semibold">Selisih Harga Tertinggi</p>
+            <p id="price-kpi-max-gap" class="text-2xl font-extrabold font-mono text-swiss-red mt-1">0%</p>
+            <p id="price-kpi-max-item" class="font-mono text-[10px] text-swiss-muted mt-1 truncate">-</p>
+          </div>
+        </div>
+
+        <!-- Filter & Pencarian -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <input type="text" id="search-price-item" oninput="renderPriceAnalysisTable()" placeholder="Cari SKU atau nama barang..." class="swiss-input sm:max-w-sm" />
+          <label class="flex items-center gap-2 text-xs font-mono cursor-pointer select-none">
+            <input type="checkbox" id="filter-only-multi-supplier" onchange="renderPriceAnalysisTable()" class="w-4 h-4 accent-black" />
+            <span>Hanya tampilkan barang dengan ≥ 2 supplier</span>
+          </label>
+        </div>
+
+        <!-- Tabel Ringkasan Perbandingan -->
+        <div class="bg-white border border-swiss-ink overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="border-b border-swiss-ink bg-neutral-50 font-mono uppercase text-[10px] text-swiss-muted">
+              <tr>
+                <th class="p-3">Barang (Per Satuan Base)</th>
+                <th class="p-3">Termurah (Harga Terakhir)</th>
+                <th class="p-3">Termahal (Harga Terakhir)</th>
+                <th class="p-3 text-right">Selisih</th>
+                <th class="p-3 text-center">Toko</th>
+                <th class="p-3 text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="price-analysis-body" class="divide-y divide-swiss-line"></tbody>
+          </table>
+        </div>
+
+        <!-- Panel Detail Perbandingan & Histori Harga -->
+        <div id="price-detail-panel" class="hidden bg-white border-2 border-swiss-ink p-4 md:p-6 space-y-5">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-swiss-ink pb-3 gap-2">
+            <div>
+              <p class="font-mono text-[10px] uppercase tracking-widest text-swiss-red font-semibold">Perbandingan Lintas Supplier</p>
+              <h3 id="price-detail-title" class="text-lg font-extrabold uppercase"></h3>
+            </div>
+            <button onclick="closePriceDetail()" class="border border-swiss-ink px-3 py-1.5 text-xs font-mono font-bold hover:bg-swiss-red hover:text-white self-start sm:self-auto">
+              Tutup ✕
+            </button>
+          </div>
+
+          <!-- Ranking Supplier -->
+          <div class="space-y-2">
+            <h4 class="font-bold text-xs uppercase tracking-wider">Peringkat Harga per Supplier (Setara Satuan Terkecil)</h4>
+            <div class="overflow-x-auto border border-swiss-line">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-neutral-50 border-b border-swiss-line font-mono text-[10px] uppercase text-swiss-muted">
+                  <tr>
+                    <th class="p-2.5">Supplier</th>
+                    <th class="p-2.5 text-right">Harga Terakhir</th>
+                    <th class="p-2.5 text-right">Terendah</th>
+                    <th class="p-2.5 text-right">Tertinggi</th>
+                    <th class="p-2.5 text-center">Beli Terakhir</th>
+                    <th class="p-2.5 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="price-detail-suppliers" class="divide-y divide-swiss-line"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Histori Kronologis -->
+          <div class="space-y-2">
+            <h4 class="font-bold text-xs uppercase tracking-wider">Riwayat Pembelian Barang Ini</h4>
+            <div class="overflow-x-auto border border-swiss-line max-h-64">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-neutral-50 border-b border-swiss-line font-mono text-[10px] uppercase text-swiss-muted">
+                  <tr>
+                    <th class="p-2.5">Tanggal</th>
+                    <th class="p-2.5">No. Bukti</th>
+                    <th class="p-2.5">Supplier</th>
+                    <th class="p-2.5">Input Nota</th>
+                    <th class="p-2.5 text-right">Harga / Satuan Base</th>
+                    <th class="p-2.5 text-right">Total Nota Baris</th>
+                  </tr>
+                </thead>
+                <tbody id="price-detail-history" class="divide-y divide-swiss-line"></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>
