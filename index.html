@@ -276,6 +276,164 @@
     ::-webkit-scrollbar-thumb { background: #D4D4CE; border-radius: 999px; }
     ::-webkit-scrollbar-thumb:hover { background: #A8A8A0; }
   </style>
+  <!-- CHART.JS + DARK MODE & CURSOR SPOTLIGHT -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    /* Efek Ambient Cursor Aura */
+    #cursor-aura {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 340px;
+      height: 340px;
+      border-radius: 999px;
+      pointer-events: none;
+      z-index: 9999;
+      background: radial-gradient(circle, rgba(234, 88, 12, 0.08) 0%, rgba(234, 88, 12, 0) 68%);
+      transform: translate3d(-500px, -500px, 0);
+      transition: opacity 0.25s ease;
+    }
+    html.dark #cursor-aura {
+      background: radial-gradient(circle, rgba(249, 115, 22, 0.14) 0%, rgba(249, 115, 22, 0) 68%);
+    }
+    @media (pointer: coarse) {
+      #cursor-aura { display: none !important; }
+    }
+
+    /* Efek Spotlight di Kartu KPI, Grafik & Login */
+    .grid > .bg-white.p-4,
+    #dash-chart-card,
+    #login-screen > div {
+      position: relative;
+      overflow: hidden;
+    }
+    .grid > .bg-white.p-4::after,
+    #dash-chart-card::after,
+    #login-screen > div::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+      background: radial-gradient(
+        260px circle at var(--mx, -200px) var(--my, -200px),
+        rgba(234, 88, 12, 0.11),
+        transparent 70%
+      );
+    }
+    .grid > .bg-white.p-4:hover::after,
+    #dash-chart-card:hover::after,
+    #login-screen > div:hover::after {
+      opacity: 1;
+    }
+    html.dark .grid > .bg-white.p-4::after,
+    html.dark #dash-chart-card::after,
+    html.dark #login-screen > div::after {
+      background: radial-gradient(
+        260px circle at var(--mx, -200px) var(--my, -200px),
+        rgba(249, 115, 22, 0.18),
+        transparent 70%
+      );
+    }
+
+    /* ======================================
+       NEO-SWISS DARK MODE
+    ====================================== */
+    html.dark {
+      color-scheme: dark;
+      --bg-canvas: #0E0E0D;
+      --bg-surface: #171715;
+      --ink-primary: #F3F3EF;
+      --ink-muted: #9B9B93;
+      --border-soft: #282824;
+      --border-strong: #363630;
+      --accent-orange: #F97316;
+      --accent-orange-soft: rgba(249, 115, 22, 0.14);
+      --accent-green: #10B981;
+    }
+
+    html.dark body {
+      background-color: var(--bg-canvas) !important;
+      color: var(--ink-primary) !important;
+    }
+    html.dark #login-screen {
+      background-color: var(--bg-canvas) !important;
+      background-image: radial-gradient(#2A2A25 1px, transparent 1px) !important;
+    }
+    html.dark #login-screen > div,
+    html.dark #sidebar,
+    html.dark main .bg-white,
+    html.dark [id^="modal-"] > div {
+      background-color: var(--bg-surface) !important;
+      border-color: var(--border-soft) !important;
+      color: var(--ink-primary) !important;
+    }
+    html.dark .bg-neutral-50,
+    html.dark .bg-neutral-100,
+    html.dark table thead {
+      background-color: #1E1E1B !important;
+    }
+    html.dark table tbody tr:hover,
+    html.dark .hover\:bg-neutral-50:hover,
+    html.dark .hover\:bg-neutral-100:hover {
+      background-color: #23231F !important;
+    }
+    html.dark .nav-btn {
+      color: #B5B5AD !important;
+    }
+    html.dark .nav-btn:hover {
+      background-color: #22221E !important;
+      color: #FFFFFF !important;
+    }
+    html.dark .nav-btn.active {
+      background-color: #262622 !important;
+      color: #FFFFFF !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    }
+    html.dark .swiss-input,
+    html.dark input[type="text"],
+    html.dark input[type="number"],
+    html.dark input[type="email"],
+    html.dark input[type="password"],
+    html.dark input[type="date"],
+    html.dark input[type="month"],
+    html.dark select,
+    html.dark textarea {
+      background-color: #111110 !important;
+      border-color: var(--border-strong) !important;
+      color: var(--ink-primary) !important;
+    }
+    html.dark button.bg-swiss-ink {
+      background-color: var(--accent-orange) !important;
+      color: #FFFFFF !important;
+      border-color: var(--accent-orange) !important;
+    }
+    html.dark button.bg-white,
+    html.dark label.bg-white {
+      background-color: #1F1F1C !important;
+      color: var(--ink-primary) !important;
+      border-color: var(--border-strong) !important;
+    }
+    html.dark button.bg-white:hover,
+    html.dark label.bg-white:hover {
+      background-color: #2A2A25 !important;
+    }
+    html.dark span.bg-swiss-ink.uppercase {
+      background-color: rgba(16, 185, 129, 0.15) !important;
+      color: #34D399 !important;
+      border-color: rgba(16, 185, 129, 0.35) !important;
+    }
+    html.dark span.bg-swiss-red.uppercase {
+      background-color: rgba(249, 115, 22, 0.16) !important;
+      color: #FB923C !important;
+      border-color: rgba(249, 115, 22, 0.38) !important;
+    }
+    html.dark .bg-red-50\/40 {
+      background-color: rgba(249, 115, 22, 0.08) !important;
+    }
+    html.dark ::-webkit-scrollbar-thumb { background: #383832; }
+  </style>
 </head>
 <body class="antialiased selection:bg-swiss-red selection:text-white">
 
@@ -376,6 +534,10 @@
       </div>
 
       <div class="p-4 border-t border-swiss-line">
+        <button id="btn-theme-toggle" type="button" onclick="toggleDarkMode()" class="w-full mb-2 border border-swiss-ink bg-white py-2 px-3 text-xs font-mono font-semibold flex items-center justify-between hover:bg-neutral-100">
+          <span id="theme-toggle-label">☾ Dark Mode</span>
+          <span class="text-[10px] text-swiss-muted">UI</span>
+        </button>
         <p id="user-email-display" class="font-mono text-[11px] text-swiss-muted truncate mb-2"></p>
         <button onclick="logout()" class="w-full border border-swiss-ink py-2 text-xs font-semibold uppercase tracking-wider hover:bg-swiss-red hover:text-white hover:border-swiss-red transition-colors">
           Keluar
@@ -416,7 +578,22 @@
             <p id="kpi-stock-value" class="text-xl md:text-2xl font-extrabold font-mono mt-2 truncate">Rp 0</p>
           </div>
         </div>
-
+<!-- GRAFIK TREN KELUAR-MASUK -->
+        <div id="dash-chart-card" class="bg-white border border-swiss-ink p-4 md:p-5 space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-swiss-line pb-3">
+            <div>
+              <h3 class="font-bold text-xs uppercase tracking-wider">Tren Aktivitas Barang Masuk vs Keluar</h3>
+              <p id="dash-chart-subtitle" class="font-mono text-[11px] text-swiss-muted">Jumlah transaksi 14 hari terakhir</p>
+            </div>
+            <div class="flex gap-1.5 no-print">
+              <button id="btn-chart-14d" type="button" onclick="setChartMode('14D')" class="border border-swiss-ink bg-swiss-ink text-white px-2.5 py-1 text-[11px] font-mono font-semibold">14 Hari</button>
+              <button id="btn-chart-6m" type="button" onclick="setChartMode('6M')" class="border border-swiss-ink bg-white px-2.5 py-1 text-[11px] font-mono font-semibold">6 Bulan</button>
+            </div>
+          </div>
+          <div class="relative h-56 md:h-64 w-full">
+            <canvas id="dash-trend-chart"></canvas>
+          </div>
+        </div>
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <!-- Low Stock Alert -->
           <div class="bg-white border border-swiss-ink">
