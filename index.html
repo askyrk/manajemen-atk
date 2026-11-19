@@ -129,6 +129,9 @@
           <button onclick="switchTab('pricing'); loadPricingAndProfit();" data-tab="pricing" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
             <span>04D / Harga & Laba</span>
           </button>
+          <button onclick="switchTab('stockopname'); loadStockOpname();" data-tab="stockopname" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
+            <span>04E / Stock Opname</span>
+          </button>
           <button onclick="switchTab('master')" data-tab="master" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
             <span>05 / Kategori & Partner</span>
           </button>
@@ -801,6 +804,116 @@
               </div>
             </div>
           </div>
+        </div>
+      </section>
+      <!-- ============ TAB 4E: BLIND STOCK OPNAME & DRAFT REKONSILIASI ============ -->
+      <section id="tab-stockopname" class="tab-section hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-end justify-between border-b-2 border-swiss-ink pb-4 gap-3">
+          <div>
+            <p class="font-mono text-xs uppercase tracking-widest text-swiss-muted">04E — Audit Gudang (Blind Count)</p>
+            <h2 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight">Stock Opname & Draft</h2>
+          </div>
+          <div class="flex flex-wrap gap-2 no-print">
+            <button onclick="downloadSOBlankSheet()" class="border border-swiss-ink bg-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-ink hover:text-white">
+              ↓ Kertas Kosong (.xlsx)
+            </button>
+            <label class="border border-swiss-ink bg-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-ink hover:text-white cursor-pointer">
+              ↑ Upload Hasil SO
+              <input type="file" id="so-excel-upload" accept=".xlsx,.xls,.csv" onchange="handleSOExcelUpload(event)" class="hidden" />
+            </label>
+            <button onclick="clearSODraft()" class="border border-swiss-red text-swiss-red bg-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-red hover:text-white">
+              Hapus Draft
+            </button>
+          </div>
+        </div>
+
+        <!-- Status Mode & Info Draft -->
+        <div class="bg-white border-2 border-swiss-ink p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span id="so-mode-badge" class="px-2 py-0.5 bg-swiss-ink text-white font-mono text-[10px] uppercase">MODE BLIND COUNT</span>
+              <span id="so-draft-status" class="font-mono text-[11px] text-swiss-muted">Draft lokal aman — belum mengubah stok sistem.</span>
+            </div>
+            <p class="text-xs text-swiss-muted">Kosongkan kolom fisik untuk barang yang belum/tidak dihitung (tidak akan diubah ke 0).</p>
+          </div>
+          <div class="flex flex-wrap gap-2 no-print">
+            <button id="btn-so-blind" onclick="setSOMode('BLIND')" class="border border-swiss-ink px-3 py-2 text-xs font-mono font-bold bg-swiss-ink text-white">
+              1. Input Blind
+            </button>
+            <button id="btn-so-reconcile" onclick="setSOMode('RECONCILE')" class="border border-swiss-ink px-3 py-2 text-xs font-mono font-bold bg-white hover:bg-neutral-100">
+              2. Buka Draft Rekonsiliasi
+            </button>
+          </div>
+        </div>
+
+        <!-- Ringkasan Rekonsiliasi (Hanya tampil saat Mode Rekonsiliasi) -->
+        <div id="so-reconcile-summary" class="hidden space-y-4">
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-white border border-swiss-ink p-4">
+              <p class="font-mono text-[11px] uppercase text-swiss-muted">Barang Dihitung</p>
+              <p id="so-kpi-counted" class="text-2xl font-extrabold font-mono mt-1">0</p>
+            </div>
+            <div class="bg-white border border-swiss-ink p-4">
+              <p class="font-mono text-[11px] uppercase text-swiss-muted">Cocok (Sesuai Sistem)</p>
+              <p id="so-kpi-match" class="text-2xl font-extrabold font-mono mt-1">0</p>
+            </div>
+            <div class="bg-white border border-swiss-ink p-4">
+              <p class="font-mono text-[11px] uppercase text-swiss-red font-semibold">Ada Selisih</p>
+              <p id="so-kpi-diff" class="text-2xl font-extrabold font-mono text-swiss-red mt-1">0</p>
+            </div>
+            <div class="bg-white border border-swiss-ink p-4">
+              <p class="font-mono text-[11px] uppercase text-swiss-muted">Estimasi Dampak Nilai</p>
+              <p id="so-kpi-val" class="text-lg md:text-xl font-extrabold font-mono mt-1 truncate">Rp 0</p>
+            </div>
+          </div>
+
+          <!-- Panel Finalisasi -->
+          <div class="bg-neutral-50 border border-swiss-ink p-4 flex flex-col lg:flex-row lg:items-end justify-between gap-3 no-print">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1">
+              <div>
+                <label class="block font-mono text-[10px] uppercase mb-1">Tanggal Berita Acara SO</label>
+                <input type="date" id="so-date" onchange="saveSODraftMeta()" class="swiss-input text-xs font-mono" />
+              </div>
+              <div>
+                <label class="block font-mono text-[10px] uppercase mb-1">Catatan / Petugas SO</label>
+                <input type="text" id="so-notes" oninput="saveSODraftMeta()" class="swiss-input text-xs" placeholder="Contoh: SO Bulanan Rak A — Petugas: Budi" />
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button onclick="exportSOReconcileCSV()" class="border border-swiss-ink bg-white px-3 py-2.5 text-xs font-mono font-semibold hover:bg-swiss-ink hover:text-white">
+                Export Draft (CSV)
+              </button>
+              <button id="btn-so-finalize" onclick="finalizeStockOpname()" class="bg-swiss-red text-white px-4 py-2.5 text-xs font-mono font-bold uppercase hover:bg-swiss-ink">
+                Sahkan & Sesuaikan Stok →
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filter Tabel SO -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div class="flex flex-wrap gap-2 flex-1">
+            <input type="text" id="so-search" oninput="renderSOTable()" placeholder="Cari SKU, nama barang, atau lokasi rak..." class="swiss-input text-xs sm:max-w-xs" />
+            <select id="so-filter-cat" onchange="renderSOTable()" class="swiss-input text-xs sm:w-48"></select>
+          </div>
+          <div class="flex flex-wrap items-center gap-4 text-xs font-mono">
+            <label class="flex items-center gap-1.5 cursor-pointer select-none">
+              <input type="checkbox" id="so-only-counted" onchange="renderSOTable()" class="w-4 h-4 accent-black" />
+              <span>Sudah dihitung</span>
+            </label>
+            <label id="so-only-diff-wrap" class="hidden flex items-center gap-1.5 cursor-pointer select-none text-swiss-red font-semibold">
+              <input type="checkbox" id="so-only-diff" onchange="renderSOTable()" class="w-4 h-4 accent-red-600" />
+              <span>Hanya yang selisih</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Tabel Input / Rekonsiliasi SO -->
+        <div class="bg-white border border-swiss-ink overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead id="so-table-head" class="border-b border-swiss-ink bg-neutral-50 font-mono uppercase text-[10px] text-swiss-muted"></thead>
+            <tbody id="so-table-body" class="divide-y divide-swiss-line"></tbody>
+          </table>
         </div>
       </section>
       <!-- ============ TAB 5: KATEGORI & PARTNER ============ -->
