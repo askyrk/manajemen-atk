@@ -1374,3 +1374,223 @@ function exportRecapDetailCSV() {
   ]);
   downloadCSV(`Rincian_${d.name.replace(/[^a-zA-Z0-9]/g, '_')}.csv`, [header, ...rows]);
 }
+// ==========================================
+// 9. ANALISA PERBANDINGAN HARGA SUPPLIER
+// ==========================================
+let priceAnalysisList = [];
+
+async function loadPriceAnalysis() {
+  const tbody = document.getElementById('price-analysis-body');
+  tbody.innerHTML = '<tr><td colspan="6" class="p-6 text-center font-mono text-swiss-muted">Menganalisa riwayat harga beli...</td></tr>';
+  closePriceDetail();
+
+  try {
+    const { data, error } = await db
+      .from('transaction_items')
+      .select('*, items(id, sku, name, base_unit), transactions!inner(reference_no, transaction_date, type, partner_id, partners(id, name))')
+      .eq('transaction_type', 'IN')
+      .gt('subtotal', 0)
+      .gt('base_qty', 0);
+
+    if (error) throw error;
+
+    // Urutkan kronologis terbaru lebih dulu
+    const rows = (data || []).sort((a, b) => {
+      const da = a.transactions?.transaction_date || '';
+      const dbDate = b.transactions?.transaction_date || '';
+      if (dbDate !== da) return dbDate.localeCompare(da);
+      return (b.created_at || '').localeCompare(a.created_at || '');
+    });
+
+    const itemMap = new Map();
+
+    rows.forEach(r => {
+      const item = r.items;
+      const tx = r.transactions;
+      if (!item || !tx) return;
+
+      const baseUnitPrice = Number(r.unit_price) > 0
+        ? Number(r.unit_price)
+        : (Number(r.subtotal) / Math.abs(Number(r.base_qty)));
+
+      const supKey = tx.partner_id || 'UMUM';
+      const supName = tx.partners?.name || 'Supplier Umum / Tanpa Nama';
+
+      if (!itemMap.has(item.id)) {
+        itemMap.set(item.id, {
+          itemId: item.id,
+          sku: item.sku,
+          name: item.name,
+          base_unit: item.base_unit,
+          suppliersMap: new Map(),
+          history: []
+        });
+      }
+
+      const entry = itemMap.get(item.id);
+      entry.history.push({
+        date: tx.transaction_date,
+        refNo: tx.reference_no,
+        supplierName: supName,
+        inputLabel: `${r.input_qty} ${r.input_unit}`,
+        basePrice: baseUnitPrice,
+        subtotal: Number(r.subtotal)
+      });
+
+      if (!entry.suppliersMap.has(supKey)) {
+        entry.suppliersMap.set(supKey, {
+          key: supKey,
+          name: supName,
+          latestPrice: baseUnitPrice,
+          latestDate: tx.transaction_date,
+          minPrice: baseUnitPrice,
+          maxPrice: baseUnitPrice,
+          count: 1
+        });
+      } else {
+        const s = entry.suppliersMap.get(supKey);
+        s.minPrice = Math.min(s.minPrice, baseUnitPrice);
+        s.maxPrice = Math.max(s.maxPrice, baseUnitPrice);
+        s.count += 1;
+      }
+    });
+
+    priceAnalysisList = Array.from(itemMap.values()).map(entry => {
+      const suppliers = Array.from(entry.suppliersMap.values()).sort((a, b) => a.latestPrice - b.latestPrice);
+      const cheapest = suppliers[0];
+      const mostExpensive = suppliers[suppliers.length - 1];
+      const gapRp = suppliers.length > 1 ? (mostExpensive.latestPrice - cheapest.latestPrice) : 0;
+      const gapPct = (suppliers.length > 1 && cheapest.latestPrice > 0)
+        ? ((gapRp / cheapest.latestPrice) * 100)
+        : 0;
+
+      return {
+        ...entry,
+        suppliers,
+        cheapest,
+        mostExpensive,
+        gapRp,
+        gapPct
+      };
+    }).sort((a, b) => b.gapPct - a.gapPct || b.suppliers.length - a.suppliers.length);
+
+    updatePriceKPIs();
+    renderPriceAnalysisTable();
+  } catch (err) {
+    showToast('Gagal memuat analisa harga: ' + err.message, 'error');
+  }
+}
+
+function updatePriceKPIs() {
+  const comparable = priceAnalysisList.filter(x => x.suppliers.length >= 2);
+  document.getElementById('price-kpi-total').textContent = priceAnalysisList.length;
+  document.getElementById('price-kpi-comparable').textContent = comparable.length;
+
+  const topGap = comparable[0];
+  if (topGap && topGap.gapPct > 0) {
+    document.getElementById('price-kpi-max-gap').textContent = `+${topGap.gapPct.toFixed(1)}%`;
+    document.getElementById('price-kpi-max-item').textContent = `${topGap.name} (selisih ${formatRupiah(topGap.gapRp)}/${topGap.base_unit})`;
+  } else {
+    document.getElementById('price-kpi-max-gap').textContent = '0%';
+    document.getElementById('price-kpi-max-item').textContent = 'Belum ada perbandingan ≥ 2 toko';
+  }
+}
+
+function renderPriceAnalysisTable() {
+  const q = (document.getElementById('search-price-item').value || '').toLowerCase();
+  const onlyMulti = document.getElementById('filter-only-multi-supplier').checked;
+
+  const filtered = priceAnalysisList.filter(x => {
+    const matchText = x.name.toLowerCase().includes(q) || x.sku.toLowerCase().includes(q);
+    const matchMulti = !onlyMulti || x.suppliers.length >= 2;
+    return matchText && matchMulti;
+  });
+
+  const tbody = document.getElementById('price-analysis-body');
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="p-6 text-center font-mono text-swiss-muted">Belum ada data harga pembelian yang sesuai filter.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(x => `
+    <tr onclick="openPriceDetail('${x.itemId}')" class="hover:bg-neutral-50 cursor-pointer">
+      <td class="p-3">
+        <div class="font-semibold">${escapeHtml(x.name)}</div>
+        <div class="font-mono text-[10px] text-swiss-muted">${escapeHtml(x.sku)} • per ${escapeHtml(x.base_unit)}</div>
+      </td>
+      <td class="p-3">
+        <div class="font-mono font-bold">${formatRupiah(x.cheapest.latestPrice)}</div>
+        <div class="text-[11px] text-swiss-muted">${escapeHtml(x.cheapest.name)}</div>
+      </td>
+      <td class="p-3">
+        ${x.suppliers.length > 1
+          ? `<div class="font-mono font-semibold text-swiss-red">${formatRupiah(x.mostExpensive.latestPrice)}</div><div class="text-[11px] text-swiss-muted">${escapeHtml(x.mostExpensive.name)}</div>`
+          : '<span class="font-mono text-[11px] text-swiss-muted">- (1 toko)</span>'}
+      </td>
+      <td class="p-3 text-right font-mono">
+        ${x.suppliers.length > 1 && x.gapRp > 0
+          ? `<div class="font-bold text-swiss-red">+${x.gapPct.toFixed(1)}%</div><div class="text-[10px] text-swiss-muted">${formatRupiah(x.gapRp)}</div>`
+          : '<span class="text-swiss-muted">-</span>'}
+      </td>
+      <td class="p-3 text-center font-mono font-semibold">${x.suppliers.length}</td>
+      <td class="p-3 text-right">
+        <button type="button" class="font-mono text-[11px] underline">Bandingkan</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function openPriceDetail(itemId) {
+  const entry = priceAnalysisList.find(x => x.itemId === itemId);
+  if (!entry) return;
+
+  document.getElementById('price-detail-title').textContent = `[${entry.sku}] ${entry.name} — Per ${entry.base_unit}`;
+
+  document.getElementById('price-detail-suppliers').innerHTML = entry.suppliers.map((s, idx) => `
+    <tr class="${idx === 0 ? 'bg-neutral-50' : ''}">
+      <td class="p-2.5 font-semibold">${escapeHtml(s.name)} <span class="font-mono text-[10px] text-swiss-muted">(${s.count}x beli)</span></td>
+      <td class="p-2.5 text-right font-mono font-bold">${formatRupiah(s.latestPrice)}</td>
+      <td class="p-2.5 text-right font-mono">${formatRupiah(s.minPrice)}</td>
+      <td class="p-2.5 text-right font-mono">${formatRupiah(s.maxPrice)}</td>
+      <td class="p-2.5 text-center font-mono">${s.latestDate}</td>
+      <td class="p-2.5 text-center">
+        ${idx === 0
+          ? '<span class="px-2 py-0.5 bg-swiss-ink text-white font-mono text-[10px] uppercase">TERMURAH</span>'
+          : `<span class="font-mono text-[10px] text-swiss-red">+${(((s.latestPrice - entry.cheapest.latestPrice) / entry.cheapest.latestPrice) * 100).toFixed(1)}%</span>`}
+      </td>
+    </tr>
+  `).join('');
+
+  document.getElementById('price-detail-history').innerHTML = entry.history.map(h => `
+    <tr>
+      <td class="p-2.5 font-mono">${h.date}</td>
+      <td class="p-2.5 font-mono font-semibold">${escapeHtml(h.refNo)}</td>
+      <td class="p-2.5">${escapeHtml(h.supplierName)}</td>
+      <td class="p-2.5 font-mono">${escapeHtml(h.inputLabel)}</td>
+      <td class="p-2.5 text-right font-mono font-bold">${formatRupiah(h.basePrice)}</td>
+      <td class="p-2.5 text-right font-mono">${formatRupiah(h.subtotal)}</td>
+    </tr>
+  `).join('');
+
+  const panel = document.getElementById('price-detail-panel');
+  panel.classList.remove('hidden');
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function closePriceDetail() {
+  document.getElementById('price-detail-panel')?.classList.add('hidden');
+}
+
+function exportPriceAnalysisCSV() {
+  if (priceAnalysisList.length === 0) return showToast('Belum ada data harga untuk diekspor.', 'error');
+  const header = ['SKU', 'Nama Barang', 'Satuan Base', 'Jumlah Supplier', 'Supplier Termurah', 'Harga Termurah', 'Supplier Termahal', 'Harga Termahal', 'Selisih (Rp)', 'Selisih (%)'];
+  const rows = priceAnalysisList.map(x => [
+    x.sku, x.name, x.base_unit, x.suppliers.length,
+    x.cheapest.name, Math.round(x.cheapest.latestPrice),
+    x.suppliers.length > 1 ? x.mostExpensive.name : '-',
+    x.suppliers.length > 1 ? Math.round(x.mostExpensive.latestPrice) : 0,
+    Math.round(x.gapRp),
+    x.gapPct.toFixed(1) + '%'
+  ]);
+  downloadCSV(`Analisa_Harga_Supplier_${new Date().toISOString().split('T')[0]}.csv`, [header, ...rows]);
+}
