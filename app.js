@@ -3019,5 +3019,261 @@ document.addEventListener('keydown', (e) => {
 });
 
 injectSidebarIcons();
+// ==========================================
+// 14. MANAJEMEN AKUN, REGISTRASI & RBAC
+// ==========================================
+const ALL_TABS_META = [
+  { id: 'dashboard', label: '01 Dashboard' },
+  { id: 'transactions', label: '02 Transaksi' },
+  { id: 'items', label: '03 Master Barang' },
+  { id: 'stockopname', label: '04 Stock Opname' },
+  { id: 'reports', label: '05 Kartu Stok' },
+  { id: 'recap', label: '06 Rekap Divisi' },
+  { id: 'prices', label: '07 Analisa Harga' },
+  { id: 'pricing', label: '08 Harga & Laba' },
+  { id: 'master', label: '09 Kategori & Partner' },
+  { id: 'settings', label: '10 Pengaturan' }
+];
+
+function openRegisterModal() {
+  document.getElementById('modal-register')?.classList.remove('hidden');
+}
+
+function closeRegisterModal() {
+  document.getElementById('modal-register')?.classList.add('hidden');
+  document.getElementById('register-form')?.reset();
+}
+
+async function handleRegister(e) {
+  e.preventDefault();
+  const btn = document.getElementById('btn-register-submit');
+  const fullName = document.getElementById('reg-name').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const password = document.getElementById('reg-password').value;
+
+  btn.disabled = true;
+  btn.textContent = 'Mendaftarkan...';
+
+  try {
+    const { error } = await db.auth.signUp({
+      email,
+      password,
+      options: { data: { full_name: fullName } }
+    });
+    if (error) throw error;
+
+    await db.auth.signOut();
+    closeRegisterModal();
+    showToast('Pendaftaran berhasil! Hubungi Admin untuk aktivasi & pengaturan akses.');
+  } catch (err) {
+    showToast('Gagal mendaftar: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Kirim Permintaan Akun';
+  }
+}
+
+function userCanAccessTab(tabId) {
+  const p = state.profile;
+  if (!p) return false;
+  if (p.is_super_admin) return true;
+  if (!p.can_view_prices && (tabId === 'prices' || tabId === 'pricing')) return false;
+  return Array.isArray(p.allowed_tabs) && p.allowed_tabs.includes(tabId);
+}
+
+function applyUserPermissions() {
+  const p = state.profile;
+  if (!p) return;
+
+  const canViewPrices = p.is_super_admin || p.can_view_prices;
+  const canDeleteTx = p.is_super_admin || p.can_delete_tx;
+
+  document.body.classList.toggle('hide-prices', !canViewPrices);
+  document.body.classList.toggle('no-delete-tx', !canDeleteTx);
+
+  // Sembunyikan menu sidebar yang tidak diizinkan
+  document.querySelectorAll('.nav-btn[data-tab]').forEach(btn => {
+    const allowed = userCanAccessTab(btn.dataset.tab);
+    btn.classList.toggle('hidden', !allowed);
+  });
+
+  // Tampilkan panel Manajemen Akun hanya untuk Super Admin
+  const adminSec = document.getElementById('admin-users-section');
+  if (adminSec) {
+    adminSec.classList.toggle('hidden', !p.is_super_admin);
+    if (p.is_super_admin) loadUserManagement();
+  }
+
+  // Jika tidak boleh lihat harga, bersihkan nilai harga di memori browser
+  if (!canViewPrices) {
+    (state.items || []).forEach(i => {
+      i.avg_cost = 0;
+      i.selling_price = 0;
+      i.box_selling_price = 0;
+    });
+    const kpiVal = document.getElementById('kpi-stock-value');
+    if (kpiVal) kpiVal.textContent = 'Terkunci';
+  }
+
+  // Pindahkan ke tab pertama yang diizinkan jika dashboard tidak diizinkan
+  if (!userCanAccessTab('dashboard')) {
+    const firstAllowed = ALL_TABS_META.find(t => userCanAccessTab(t.id));
+    if (firstAllowed) switchTab(firstAllowed.id);
+  }
+}
+
+async function loadUserManagement() {
+  const container = document.getElementById('admin-users-list');
+  if (!container || !state.profile?.is_super_admin) return;
+
+  const { data: users, error } = await db
+    .from('user_profiles')
+    .select('*')
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    container.innerHTML = `<p class="text-xs font-mono text-swiss-red">Gagal memuat: ${escapeHtml(error.message)}</p>`;
+    return;
+  }
+
+  if (!users || users.length === 0) {
+    container.innerHTML = '<p class="text-xs font-mono text-swiss-muted">Belum ada akun terdaftar.</p>';
+    return;
+  }
+
+  container.innerHTML = users.map(u => {
+    const isMe = u.id === state.user.id;
+    const tabs = Array.isArray(u.allowed_tabs) ? u.allowed_tabs : [];
+
+    return `
+      <div class="border border-swiss-line rounded-lg p-4 space-y-3 ${!u.is_active ? 'bg-red-50/40' : 'bg-neutral-50/50'}" data-user-card="${u.id}">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-bold text-sm">${escapeHtml(u.full_name || u.email)}</span>
+              ${u.is_super_admin
+                ? '<span class="px-2 py-0.5 bg-swiss-ink text-white font-mono text-[10px] uppercase">SUPER ADMIN</span>'
+                : u.is_active
+                  ? '<span class="px-2 py-0.5 bg-swiss-ink text-white font-mono text-[10px] uppercase">AKTIF</span>'
+                  : '<span class="px-2 py-0.5 bg-swiss-red text-white font-mono text-[10px] uppercase">PENDING / NONAKTIF</span>'}
+            </div>
+            <p class="font-mono text-[11px] text-swiss-muted">${escapeHtml(u.email)}</p>
+          </div>
+          ${isMe ? '<span class="font-mono text-[10px] text-swiss-muted">Akun Anda (Akses Penuh)</span>' : `
+            <div class="flex items-center gap-2">
+              <button type="button" onclick="saveUserPermissions('${u.id}')" class="bg-swiss-ink text-white px-3 py-1.5 text-xs font-mono font-semibold hover:bg-swiss-red">
+                Simpan Izin
+              </button>
+            </div>
+          `}
+        </div>
+
+        ${isMe ? '' : `
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 border-t border-swiss-line text-xs font-mono">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" class="u-active w-4 h-4 accent-black" ${u.is_active ? 'checked' : ''} />
+              <span class="font-semibold">Aktifkan Akun</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" class="u-prices w-4 h-4 accent-black" ${u.can_view_prices ? 'checked' : ''} />
+              <span>Boleh Lihat Harga / HPP</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" class="u-deltx w-4 h-4 accent-red-600" ${u.can_delete_tx ? 'checked' : ''} />
+              <span>Boleh Hapus Transaksi</span>
+            </label>
+          </div>
+
+          <div class="pt-2 border-t border-swiss-line">
+            <p class="font-mono text-[10px] uppercase text-swiss-muted mb-2">Akses Menu Diizinkan:</p>
+            <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px] font-mono">
+              ${ALL_TABS_META.map(t => `
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" class="u-tab w-3.5 h-3.5 accent-black" value="${t.id}" ${tabs.includes(t.id) ? 'checked' : ''} />
+                  <span>${t.label}</span>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+        `}
+      </div>
+    `;
+  }).join('');
+}
+
+async function saveUserPermissions(userId) {
+  const card = document.querySelector(`[data-user-card="${userId}"]`);
+  if (!card) return;
+
+  const isActive = card.querySelector('.u-active')?.checked || false;
+  const canViewPrices = card.querySelector('.u-prices')?.checked || false;
+  const canDeleteTx = card.querySelector('.u-deltx')?.checked || false;
+  const allowedTabs = Array.from(card.querySelectorAll('.u-tab:checked')).map(el => el.value);
+
+  const { error } = await db
+    .from('user_profiles')
+    .update({
+      is_active: isActive,
+      can_view_prices: canViewPrices,
+      can_delete_tx: canDeleteTx,
+      allowed_tabs: allowedTabs
+    })
+    .eq('id', userId);
+
+  if (error) return showToast('Gagal menyimpan izin: ' + error.message, 'error');
+  showToast('Hak akses akun berhasil diperbarui!');
+  loadUserManagement();
+}
+
+// Guard showApp: Cek status aktif & muat profil izin dari Supabase
+const _origShowAppRBAC = showApp;
+showApp = async function () {
+  const { data: profile, error } = await db
+    .from('user_profiles')
+    .select('*')
+    .eq('id', state.user.id)
+    .single();
+
+  if (error || !profile || !profile.is_active) {
+    await db.auth.signOut();
+    showToast('Akun Anda belum aktif / menunggu persetujuan Admin.', 'error');
+    document.getElementById('app-screen')?.classList.add('hidden');
+    document.getElementById('login-screen')?.classList.remove('hidden');
+    return;
+  }
+
+  state.profile = profile;
+  await _origShowAppRBAC();
+  applyUserPermissions();
+};
+
+// Guard switchTab: Blokir pindah tab lewat Console/Inspect Element
+const _origSwitchTabRBAC = switchTab;
+switchTab = function (tabId) {
+  if (state.profile && !userCanAccessTab(tabId)) {
+    showToast('Anda tidak memiliki izin mengakses menu tersebut.', 'error');
+    return;
+  }
+  _origSwitchTabRBAC(tabId);
+};
+
+// Guard Command Palette (Ctrl+K): Sembunyikan menu yang tidak diizinkan
+if (typeof buildCommandList === 'function') {
+  const _origBuildCmdRBAC = buildCommandList;
+  buildCommandList = function (query) {
+    const list = _origBuildCmdRBAC(query);
+    if (!state.profile || state.profile.is_super_admin) return list;
+    return list.filter(item => {
+      if (item.group === 'Navigasi Cepat') {
+        const match = ALL_TABS_META.find(t => item.label.startsWith(t.label.substring(0, 2)));
+        return match ? userCanAccessTab(match.id) : true;
+      }
+      if (item.label.includes('Tambah Barang') || item.label.includes('Import Massal')) {
+        return userCanAccessTab('items');
+      }
+      return true;
+    });
+  };
+}
 // Mulai aplikasi
 checkSession();
