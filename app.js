@@ -3227,27 +3227,6 @@ async function saveUserPermissions(userId) {
 
 // Guard showApp: Cek status aktif & muat profil izin dari Supabase
 const _origShowAppRBAC = showApp;
-showApp = async function () {
-  const { data: profile, error } = await db
-    .from('user_profiles')
-    .select('*')
-    .eq('id', state.user.id)
-    .single();
-
-  if (error || !profile || !profile.is_active) {
-    await db.auth.signOut();
-    showToast('Akun Anda belum aktif / menunggu persetujuan Admin.', 'error');
-    document.getElementById('app-screen')?.classList.add('hidden');
-    document.getElementById('login-screen')?.classList.remove('hidden');
-    return;
-  }
-
-  state.profile = profile;
-  await _origShowAppRBAC();
-  applyUserPermissions();
-};
-// Guard showApp: Cek status aktif & muat profil izin dari Supabase
-const _origShowAppRBAC = showApp;
 showApp = async function (...args) {
   const { data: authData } = await db.auth.getUser();
   const activeUser = state.user || args[0] || authData?.user;
