@@ -669,20 +669,23 @@
               <label class="block font-mono text-[10px] uppercase mb-1">Customer / Partner</label>
               <select id="pp-partner" required class="swiss-input text-xs"></select>
             </div>
-            <div class="md:col-span-4">
+            <div class="md:col-span-3">
               <label class="block font-mono text-[10px] uppercase mb-1">Barang</label>
               <select id="pp-item" required onchange="onPartnerPriceItemChange()" class="swiss-input text-xs"></select>
             </div>
             <div class="md:col-span-2">
-              <label class="block font-mono text-[10px] uppercase mb-1">Harga Khusus / Base (Rp)</label>
-              <input type="number" id="pp-custom-price" required min="0" class="swiss-input text-xs font-mono" placeholder="50000" />
+              <label class="block font-mono text-[10px] uppercase mb-1">Satuan</label>
+              <select id="pp-unit" required class="swiss-input text-xs font-mono">
+                <option value="">-- Pilih --</option>
+              </select>
             </div>
             <div class="md:col-span-2">
-              <label class="block font-mono text-[10px] uppercase mb-1">Catatan</label>
-              <input type="text" id="pp-notes" class="swiss-input text-xs" placeholder="Kontrak 2026" />
+              <label class="block font-mono text-[10px] uppercase mb-1">Harga Khusus (Rp)</label>
+              <input type="number" id="pp-custom-price" required min="0" class="swiss-input text-xs font-mono" placeholder="50000" />
             </div>
-            <div class="md:col-span-1">
-              <button type="submit" class="w-full bg-swiss-ink text-white py-2.5 text-xs font-semibold uppercase hover:bg-swiss-red">Simpan</button>
+            <div class="md:col-span-2 flex gap-2">
+              <input type="text" id="pp-notes" class="swiss-input text-xs flex-1" placeholder="Catatan" />
+              <button type="submit" class="bg-swiss-ink text-white px-3 py-2.5 text-xs font-semibold uppercase hover:bg-swiss-red shrink-0">Simpan</button>
             </div>
           </form>
           <p id="pp-info-base" class="font-mono text-[11px] text-swiss-muted hidden"></p>
