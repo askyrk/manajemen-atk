@@ -1116,8 +1116,11 @@ function downloadImportTemplate() {
       SATUAN_TERKECIL: 'RIM',
       STOK_MIN: 5,
       LOKASI: 'Rak A1',
+      HPP_MODAL: 42000,
+      HARGA_JUAL: 50000,
       SATUAN_BESAR: 'BOX',
-      ISI_SATUAN_BESAR: 5
+      ISI_SATUAN_BESAR: 5,
+      HARGA_JUAL_SATUAN_BESAR: 240000
     },
     {
       SKU: 'KLT-001',
@@ -1126,8 +1129,11 @@ function downloadImportTemplate() {
       SATUAN_TERKECIL: 'PCS',
       STOK_MIN: 20,
       LOKASI: 'Gudang B',
+      HPP_MODAL: 4300,
+      HARGA_JUAL: 5500,
       SATUAN_BESAR: 'PACK',
-      ISI_SATUAN_BESAR: 10
+      ISI_SATUAN_BESAR: 10,
+      HARGA_JUAL_SATUAN_BESAR: ''
     }
   ];
 
@@ -1144,6 +1150,14 @@ function normalizeRowKeys(rawRow) {
     normalized[cleanKey] = rawRow[k];
   });
   return normalized;
+}
+
+function parseOptionalNumber(val) {
+  if (val === '' || val === null || val === undefined) return null;
+  const cleaned = String(val).replace(/[^\d.-]/g, '');
+  if (cleaned === '') return null;
+  const num = Number(cleaned);
+  return isNaN(num) ? null : num;
 }
 
 function handleImportFile(event) {
@@ -1172,8 +1186,11 @@ function handleImportFile(event) {
           base_unit: String(r.SATUAN_TERKECIL || r.SATUAN || 'PCS').trim().toUpperCase() || 'PCS',
           min_stock: Number(r.STOK_MIN || r.MIN_STOCK || 0) || 0,
           location: String(r.LOKASI || '').trim(),
+          avg_cost: parseOptionalNumber(r.HPP_MODAL ?? r.HPP ?? r.MODAL),
+          default_sell_price: parseOptionalNumber(r.HARGA_JUAL ?? r.HARGA_JUAL_STANDAR),
           big_unit: String(r.SATUAN_BESAR || '').trim().toUpperCase(),
-          big_factor: Number(r.ISI_SATUAN_BESAR || r.ISI_PER_SATUAN || 0) || 0
+          big_factor: Number(r.ISI_SATUAN_BESAR || r.ISI_PER_SATUAN || 0) || 0,
+          big_sell_price: parseOptionalNumber(r.HARGA_JUAL_SATUAN_BESAR ?? r.HARGA_GROSIR ?? r.HARGA_SATUAN_BESAR)
         });
       });
 
@@ -1187,15 +1204,26 @@ function handleImportFile(event) {
       }
 
       document.getElementById('import-summary-text').textContent = `Siap diimport: ${pendingImportRows.length} barang unik.`;
-      document.getElementById('import-preview-body').innerHTML = pendingImportRows.slice(0, 10).map(r => `
-        <tr>
-          <td class="p-2 font-mono font-semibold">${escapeHtml(r.sku)}</td>
-          <td class="p-2">${escapeHtml(r.name)}</td>
-          <td class="p-2">${escapeHtml(r.categoryName || '-')}</td>
-          <td class="p-2 font-mono">${escapeHtml(r.base_unit)}</td>
-          <td class="p-2 font-mono text-swiss-muted">${r.big_unit && r.big_factor > 1 ? `1 ${escapeHtml(r.big_unit)} = ${r.big_factor} ${escapeHtml(r.base_unit)}` : '-'}</td>
-        </tr>
-      `).join('');
+      document.getElementById('import-preview-body').innerHTML = pendingImportRows.slice(0, 10).map(r => {
+        const priceNote = (r.avg_cost !== null || r.default_sell_price !== null)
+          ? `<div class="text-[10px] text-swiss-muted">HPP: ${r.avg_cost !== null ? formatRupiah(r.avg_cost) : '-'} | Jual: ${r.default_sell_price !== null ? formatRupiah(r.default_sell_price) : '-'}</div>`
+          : '';
+        const bigPriceNote = (r.big_sell_price !== null && r.big_sell_price > 0)
+          ? `<div class="text-[10px] text-swiss-ink font-semibold">Jual: ${formatRupiah(r.big_sell_price)}</div>`
+          : '';
+
+        return `
+          <tr>
+            <td class="p-2 font-mono font-semibold">${escapeHtml(r.sku)}</td>
+            <td class="p-2">${escapeHtml(r.name)}</td>
+            <td class="p-2">${escapeHtml(r.categoryName || '-')}</td>
+            <td class="p-2 font-mono">${escapeHtml(r.base_unit)}${priceNote}</td>
+            <td class="p-2 font-mono text-swiss-muted">
+              ${r.big_unit && r.big_factor > 1 ? `1 ${escapeHtml(r.big_unit)} = ${r.big_factor} ${escapeHtml(r.base_unit)}${bigPriceNote}` : '-'}
+            </td>
+          </tr>
+        `;
+      }).join('');
 
       document.getElementById('import-preview-wrapper').classList.remove('hidden');
       document.getElementById('btn-run-import').disabled = false;
@@ -1214,6 +1242,7 @@ async function executeBulkImport() {
 
   try {
     const existingCatMap = new Map(state.categories.map(c => [c.name.toLowerCase(), c.id]));
+    const existingItemsMap = new Map(state.items.map(i => [i.sku.toUpperCase(), i]));
     const newCategories = [];
     const seenNewCats = new Set();
 
@@ -1234,14 +1263,19 @@ async function executeBulkImport() {
       (insertedCats || []).forEach(c => existingCatMap.set(c.name.toLowerCase(), c.id));
     }
 
-    const itemsPayload = pendingImportRows.map(r => ({
-      sku: r.sku,
-      name: r.name,
-      category_id: r.categoryName ? (existingCatMap.get(r.categoryName.toLowerCase()) || null) : null,
-      base_unit: r.base_unit,
-      min_stock: r.min_stock,
-      location: r.location
-    }));
+    const itemsPayload = pendingImportRows.map(r => {
+      const existing = existingItemsMap.get(r.sku);
+      return {
+        sku: r.sku,
+        name: r.name,
+        category_id: r.categoryName ? (existingCatMap.get(r.categoryName.toLowerCase()) || null) : (existing?.category_id || null),
+        base_unit: r.base_unit,
+        min_stock: r.min_stock,
+        location: r.location,
+        avg_cost: r.avg_cost !== null ? r.avg_cost : (Number(existing?.avg_cost) || 0),
+        default_sell_price: r.default_sell_price !== null ? r.default_sell_price : (Number(existing?.default_sell_price) || 0)
+      };
+    });
 
     const savedItemsMap = new Map();
     for (let i = 0; i < itemsPayload.length; i += 100) {
@@ -1258,10 +1292,13 @@ async function executeBulkImport() {
     pendingImportRows.forEach(r => {
       const itemId = savedItemsMap.get(r.sku);
       if (itemId && r.big_unit && r.big_factor > 1 && r.big_unit !== r.base_unit) {
+        const existingItem = existingItemsMap.get(r.sku);
+        const existingUnit = (existingItem?.item_units || []).find(u => u.unit_name.toUpperCase() === r.big_unit);
         unitsMap.set(`${itemId}|${r.big_unit}`, {
           item_id: itemId,
           unit_name: r.big_unit,
-          conversion_factor: r.big_factor
+          conversion_factor: r.big_factor,
+          sell_price: r.big_sell_price !== null ? r.big_sell_price : (Number(existingUnit?.sell_price) || 0)
         });
       }
     });
@@ -1276,7 +1313,7 @@ async function executeBulkImport() {
     }
 
     closeImportModal();
-    showToast(`Berhasil mengimport ${pendingImportRows.length} barang!`);
+    showToast(`Berhasil mengimport ${pendingImportRows.length} barang beserta data harganya!`);
     await loadAllData();
   } catch (err) {
     showToast('Gagal import: ' + err.message, 'error');
