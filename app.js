@@ -961,3 +961,204 @@ document.getElementById('form-settings').addEventListener('submit', async (e) =>
 
 // Mulai aplikasi
 checkSession();
+// ==========================================
+// 7. IMPORT MASSAL MASTER BARANG (EXCEL / CSV)
+// ==========================================
+let pendingImportRows = [];
+
+function openImportModal() {
+  pendingImportRows = [];
+  document.getElementById('import-file-input').value = '';
+  document.getElementById('import-preview-wrapper').classList.add('hidden');
+  document.getElementById('import-preview-body').innerHTML = '';
+  document.getElementById('btn-run-import').disabled = true;
+  document.getElementById('btn-run-import').textContent = 'Mulai Import ke Database';
+  document.getElementById('modal-import-items').classList.remove('hidden');
+}
+
+function closeImportModal() {
+  document.getElementById('modal-import-items').classList.add('hidden');
+}
+
+function downloadImportTemplate() {
+  const sampleData = [
+    {
+      SKU: 'ATK-001',
+      NAMA_BARANG: 'Kertas HVS A4 70gr',
+      KATEGORI: 'Alat Tulis Kantor',
+      SATUAN_TERKECIL: 'RIM',
+      STOK_MIN: 5,
+      LOKASI: 'Rak A1',
+      SATUAN_BESAR: 'BOX',
+      ISI_SATUAN_BESAR: 5
+    },
+    {
+      SKU: 'KLT-001',
+      NAMA_BARANG: 'Tisu Kamar Mandi Roll',
+      KATEGORI: 'Kebersihan',
+      SATUAN_TERKECIL: 'PCS',
+      STOK_MIN: 20,
+      LOKASI: 'Gudang B',
+      SATUAN_BESAR: 'PACK',
+      ISI_SATUAN_BESAR: 10
+    }
+  ];
+
+  const ws = XLSX.utils.json_to_sheet(sampleData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Template_Master_Barang');
+  XLSX.writeFile(wb, 'Template_Import_Master_ATK.xlsx');
+}
+
+function normalizeRowKeys(rawRow) {
+  const normalized = {};
+  Object.keys(rawRow).forEach(k => {
+    const cleanKey = String(k).trim().toUpperCase().replace(/\s+/g, '_');
+    normalized[cleanKey] = rawRow[k];
+  });
+  return normalized;
+}
+
+function handleImportFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rawRows = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
+
+      // Normalisasi & deduplikasi berdasarkan SKU
+      const skuMap = new Map();
+      rawRows.forEach(raw => {
+        const r = normalizeRowKeys(raw);
+        const sku = String(r.SKU || '').trim().toUpperCase();
+        const name = String(r.NAMA_BARANG || r.NAMA_PRODUK || r.NAMA || '').trim();
+        if (!sku || !name) return;
+
+        skuMap.set(sku, {
+          sku,
+          name,
+          categoryName: String(r.KATEGORI || '').trim(),
+          base_unit: String(r.SATUAN_TERKECIL || r.SATUAN || 'PCS').trim().toUpperCase() || 'PCS',
+          min_stock: Number(r.STOK_MIN || r.MIN_STOCK || 0) || 0,
+          location: String(r.LOKASI || '').trim(),
+          big_unit: String(r.SATUAN_BESAR || '').trim().toUpperCase(),
+          big_factor: Number(r.ISI_SATUAN_BESAR || r.ISI_PER_SATUAN || 0) || 0
+        });
+      });
+
+      pendingImportRows = Array.from(skuMap.values());
+
+      if (pendingImportRows.length === 0) {
+        showToast('Tidak ada baris valid. Pastikan kolom SKU dan NAMA_BARANG terisi.', 'error');
+        document.getElementById('import-preview-wrapper').classList.add('hidden');
+        document.getElementById('btn-run-import').disabled = true;
+        return;
+      }
+
+      document.getElementById('import-summary-text').textContent = `Siap diimport: ${pendingImportRows.length} barang unik.`;
+      document.getElementById('import-preview-body').innerHTML = pendingImportRows.slice(0, 10).map(r => `
+        <tr>
+          <td class="p-2 font-mono font-semibold">${escapeHtml(r.sku)}</td>
+          <td class="p-2">${escapeHtml(r.name)}</td>
+          <td class="p-2">${escapeHtml(r.categoryName || '-')}</td>
+          <td class="p-2 font-mono">${escapeHtml(r.base_unit)}</td>
+          <td class="p-2 font-mono text-swiss-muted">${r.big_unit && r.big_factor > 1 ? `1 ${escapeHtml(r.big_unit)} = ${r.big_factor} ${escapeHtml(r.base_unit)}` : '-'}</td>
+        </tr>
+      `).join('');
+
+      document.getElementById('import-preview-wrapper').classList.remove('hidden');
+      document.getElementById('btn-run-import').disabled = false;
+    } catch (err) {
+      showToast('Gagal membaca file: ' + err.message, 'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function executeBulkImport() {
+  if (pendingImportRows.length === 0) return;
+  const btn = document.getElementById('btn-run-import');
+  btn.disabled = true;
+  btn.textContent = 'Mengimport data...';
+
+  try {
+    // 1. Cek & buat kategori baru secara otomatis jika belum ada
+    const existingCatMap = new Map(state.categories.map(c => [c.name.toLowerCase(), c.id]));
+    const newCategories = [];
+    const seenNewCats = new Set();
+
+    pendingImportRows.forEach(r => {
+      if (r.categoryName) {
+        const key = r.categoryName.toLowerCase();
+        if (!existingCatMap.has(key) && !seenNewCats.has(key)) {
+          seenNewCats.add(key);
+          const prefix = r.sku.includes('-') ? r.sku.split('-')[0].substring(0, 5) : r.categoryName.substring(0, 3).toUpperCase();
+          newCategories.push({ name: r.categoryName, code_prefix: prefix });
+        }
+      }
+    });
+
+    if (newCategories.length > 0) {
+      const { data: insertedCats, error: catErr } = await db.from('categories').insert(newCategories).select();
+      if (catErr) throw catErr;
+      (insertedCats || []).forEach(c => existingCatMap.set(c.name.toLowerCase(), c.id));
+    }
+
+    // 2. Siapkan payload items (tanpa menyentuh current_stock agar saldo lama tetap aman)
+    const itemsPayload = pendingImportRows.map(r => ({
+      sku: r.sku,
+      name: r.name,
+      category_id: r.categoryName ? (existingCatMap.get(r.categoryName.toLowerCase()) || null) : null,
+      base_unit: r.base_unit,
+      min_stock: r.min_stock,
+      location: r.location
+    }));
+
+    // Upsert per 100 baris agar stabil untuk file besar
+    const savedItemsMap = new Map();
+    for (let i = 0; i < itemsPayload.length; i += 100) {
+      const chunk = itemsPayload.slice(i, i + 100);
+      const { data: savedChunk, error: itemErr } = await db
+        .from('items')
+        .upsert(chunk, { onConflict: 'sku' })
+        .select('id, sku');
+      if (itemErr) throw itemErr;
+      (savedChunk || []).forEach(it => savedItemsMap.set(it.sku, it.id));
+    }
+
+    // 3. Simpan konversi satuan besar (jika diisi di Excel)
+    const unitsMap = new Map();
+    pendingImportRows.forEach(r => {
+      const itemId = savedItemsMap.get(r.sku);
+      if (itemId && r.big_unit && r.big_factor > 1 && r.big_unit !== r.base_unit) {
+        unitsMap.set(`${itemId}|${r.big_unit}`, {
+          item_id: itemId,
+          unit_name: r.big_unit,
+          conversion_factor: r.big_factor
+        });
+      }
+    });
+
+    const unitsPayload = Array.from(unitsMap.values());
+    for (let i = 0; i < unitsPayload.length; i += 100) {
+      const chunk = unitsPayload.slice(i, i + 100);
+      const { error: uErr } = await db
+        .from('item_units')
+        .upsert(chunk, { onConflict: 'item_id,unit_name' });
+      if (uErr) throw uErr;
+    }
+
+    closeImportModal();
+    showToast(`Berhasil mengimport ${pendingImportRows.length} barang!`);
+    await loadAllData();
+  } catch (err) {
+    showToast('Gagal import: ' + err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Mulai Import ke Database';
+  }
+}
