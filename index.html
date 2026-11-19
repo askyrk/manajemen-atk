@@ -126,6 +126,9 @@
           <button onclick="switchTab('prices'); loadPriceAnalysis();" data-tab="prices" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
             <span>04C / Analisa Harga</span>
           </button>
+          <button onclick="switchTab('pricing'); loadPricingAndProfit();" data-tab="pricing" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
+            <span>04D / Harga & Laba</span>
+          </button>
           <button onclick="switchTab('master')" data-tab="master" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
             <span>05 / Kategori & Partner</span>
           </button>
@@ -350,6 +353,7 @@
                 <th class="p-3">Kategori</th>
                 <th class="p-3">Stok Tersedia (Otomatis)</th>
                 <th class="p-3">Konversi Satuan</th>
+                <th class="p-3">HPP / Harga Jual</th>
                 <th class="p-3 text-right">Aksi</th>
               </tr>
             </thead>
@@ -646,6 +650,148 @@
           </div>
         </div>
       </section>
+      <!-- ============ TAB 4D: MANAJEMEN HARGA KHUSUS & ANALISA LABA ============ -->
+      <section id="tab-pricing" class="tab-section hidden space-y-8">
+        <div class="border-b-2 border-swiss-ink pb-4">
+          <p class="font-mono text-xs uppercase tracking-widest text-swiss-muted">04D — Komersial & Profitabilitas</p>
+          <h2 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight">Manajemen Harga & Analisa Laba</h2>
+        </div>
+
+        <!-- BAGIAN A: HARGA KHUSUS PER CUSTOMER / PARTNER -->
+        <div class="bg-white border-2 border-swiss-ink p-4 md:p-6 space-y-5">
+          <div class="border-b border-swiss-line pb-3">
+            <h3 class="font-bold text-xs uppercase tracking-wider">A. Harga Khusus per Customer / Instansi</h3>
+            <p class="text-[11px] text-swiss-muted font-mono mt-1">Harga di sini akan otomatis terisi di form Stok Keluar saat memilih Customer/Divisi terkait.</p>
+          </div>
+
+          <form id="form-partner-price" class="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+            <div class="md:col-span-3">
+              <label class="block font-mono text-[10px] uppercase mb-1">Customer / Partner</label>
+              <select id="pp-partner" required class="swiss-input text-xs"></select>
+            </div>
+            <div class="md:col-span-4">
+              <label class="block font-mono text-[10px] uppercase mb-1">Barang</label>
+              <select id="pp-item" required onchange="onPartnerPriceItemChange()" class="swiss-input text-xs"></select>
+            </div>
+            <div class="md:col-span-2">
+              <label class="block font-mono text-[10px] uppercase mb-1">Harga Khusus / Base (Rp)</label>
+              <input type="number" id="pp-custom-price" required min="0" class="swiss-input text-xs font-mono" placeholder="50000" />
+            </div>
+            <div class="md:col-span-2">
+              <label class="block font-mono text-[10px] uppercase mb-1">Catatan</label>
+              <input type="text" id="pp-notes" class="swiss-input text-xs" placeholder="Kontrak 2026" />
+            </div>
+            <div class="md:col-span-1">
+              <button type="submit" class="w-full bg-swiss-ink text-white py-2.5 text-xs font-semibold uppercase hover:bg-swiss-red">Simpan</button>
+            </div>
+          </form>
+          <p id="pp-info-base" class="font-mono text-[11px] text-swiss-muted hidden"></p>
+
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2">
+            <h4 class="font-bold text-xs uppercase tracking-wider">Daftar Harga Khusus Aktif</h4>
+            <select id="filter-pp-partner" onchange="renderPartnerPricesTable()" class="swiss-input py-1.5 text-xs sm:w-64"></select>
+          </div>
+
+          <div class="overflow-x-auto border border-swiss-line">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-neutral-50 border-b border-swiss-line font-mono text-[10px] uppercase text-swiss-muted">
+                <tr>
+                  <th class="p-2.5">Partner / Customer</th>
+                  <th class="p-2.5">Barang</th>
+                  <th class="p-2.5 text-right">HPP (Modal)</th>
+                  <th class="p-2.5 text-right">Harga Standar</th>
+                  <th class="p-2.5 text-right">Harga Khusus</th>
+                  <th class="p-2.5 text-right">Margin</th>
+                  <th class="p-2.5 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="partner-prices-body" class="divide-y divide-swiss-line"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- BAGIAN B: ANALISA KEUNTUNGAN (LABA KOTOR) -->
+        <div class="space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+            <div>
+              <h3 class="font-extrabold text-lg uppercase tracking-tight">B. Analisa Keuntungan (Laba Kotor)</h3>
+              <p class="font-mono text-[11px] text-swiss-muted">Dihitung dari transaksi Stok Keluar yang memiliki nilai jual (Omzet − HPP Terkunci).</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 no-print">
+              <select id="profit-period-mode" onchange="onProfitModeChange()" class="swiss-input py-2 text-xs font-mono w-auto">
+                <option value="MONTH">Per Bulan</option>
+                <option value="ALL">Semua Periode</option>
+              </select>
+              <input type="month" id="profit-month" onchange="loadProfitAnalysis()" class="swiss-input py-2 text-xs font-mono w-auto" />
+              <button onclick="exportProfitCSV()" class="bg-swiss-ink text-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-red">
+                Export Laba (CSV)
+              </button>
+            </div>
+          </div>
+
+          <!-- KPI Profit -->
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-white border border-swiss-ink p-4">
+              <p class="font-mono text-[11px] uppercase text-swiss-muted">Total Penjualan (Omzet)</p>
+              <p id="profit-kpi-rev" class="text-lg md:text-2xl font-extrabold font-mono mt-1 truncate">Rp 0</p>
+            </div>
+            <div class="bg-white border border-swiss-ink p-4">
+              <p class="font-mono text-[11px] uppercase text-swiss-muted">Total Modal (HPP)</p>
+              <p id="profit-kpi-cogs" class="text-lg md:text-2xl font-extrabold font-mono mt-1 truncate">Rp 0</p>
+            </div>
+            <div class="bg-white border border-swiss-ink p-4">
+              <p class="font-mono text-[11px] uppercase text-swiss-red font-semibold">Laba Kotor</p>
+              <p id="profit-kpi-gross" class="text-lg md:text-2xl font-extrabold font-mono text-swiss-red mt-1 truncate">Rp 0</p>
+            </div>
+            <div class="bg-white border border-swiss-ink p-4">
+              <p class="font-mono text-[11px] uppercase text-swiss-muted">Rata-Rata Margin</p>
+              <p id="profit-kpi-margin" class="text-2xl font-extrabold font-mono mt-1">0%</p>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Laba per Produk -->
+            <div class="bg-white border border-swiss-ink">
+              <div class="px-4 py-3 border-b border-swiss-ink bg-neutral-50">
+                <h4 class="font-bold text-xs uppercase tracking-wider">Keuntungan per Produk</h4>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                  <thead class="border-b border-swiss-line font-mono text-[10px] uppercase text-swiss-muted">
+                    <tr>
+                      <th class="p-3">Produk</th>
+                      <th class="p-3 text-right">Qty</th>
+                      <th class="p-3 text-right">Omzet</th>
+                      <th class="p-3 text-right">Laba & Margin</th>
+                    </tr>
+                  </thead>
+                  <tbody id="profit-by-item-body" class="divide-y divide-swiss-line"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Laba per Customer / Partner -->
+            <div class="bg-white border border-swiss-ink">
+              <div class="px-4 py-3 border-b border-swiss-ink bg-neutral-50">
+                <h4 class="font-bold text-xs uppercase tracking-wider">Keuntungan per Customer / Partner</h4>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                  <thead class="border-b border-swiss-line font-mono text-[10px] uppercase text-swiss-muted">
+                    <tr>
+                      <th class="p-3">Customer / Partner</th>
+                      <th class="p-3 text-right">Omzet</th>
+                      <th class="p-3 text-right">HPP</th>
+                      <th class="p-3 text-right">Laba & Margin</th>
+                    </tr>
+                  </thead>
+                  <tbody id="profit-by-partner-body" class="divide-y divide-swiss-line"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
       <!-- ============ TAB 5: KATEGORI & PARTNER ============ -->
       <section id="tab-master" class="tab-section hidden space-y-6">
         <div class="border-b-2 border-swiss-ink pb-4">
@@ -769,7 +915,25 @@
             <input type="text" id="item-location" class="swiss-input" placeholder="Rak A1" />
           </div>
         </div>
-
+<!-- Manajemen Harga & Kalkulator Margin -->
+        <div class="border-t border-swiss-line pt-3 space-y-2">
+          <label class="block font-mono text-[11px] uppercase font-semibold">Harga & Kalkulator Margin (Per Satuan Terkecil)</label>
+          <div class="grid grid-cols-3 gap-2">
+            <div>
+              <label class="block font-mono text-[10px] text-swiss-muted mb-1">HPP / Modal (Rp)</label>
+              <input type="number" id="item-avg-cost" min="0" step="any" oninput="onMarginInput()" class="swiss-input font-mono text-xs" placeholder="0" />
+            </div>
+            <div>
+              <label class="block font-mono text-[10px] text-swiss-muted mb-1">Target Margin (%)</label>
+              <input type="number" id="item-margin-pct" step="any" oninput="onMarginInput()" class="swiss-input font-mono text-xs" placeholder="15" />
+            </div>
+            <div>
+              <label class="block font-mono text-[10px] text-swiss-muted mb-1">Harga Jual Standar</label>
+              <input type="number" id="item-sell-price" min="0" step="any" oninput="onSellPriceInput()" class="swiss-input font-mono text-xs font-bold" placeholder="0" />
+            </div>
+          </div>
+          <p id="item-price-warning" class="hidden font-mono text-[11px] text-swiss-red font-semibold">⚠ Peringatan: Harga jual di bawah HPP (modal)!</p>
+        </div>
         <!-- Konversi Satuan -->
         <div class="border-t border-swiss-line pt-3">
           <div class="flex items-center justify-between mb-2">
