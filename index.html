@@ -581,6 +581,19 @@
       animation: pulseDot 2s infinite;
     }
   </style>
+  <style>
+    /* Pengaman UI jika izin hapus transaksi dimatikan */
+    body.no-delete-tx button[onclick^="deleteTransaction"] {
+      display: none !important;
+    }
+    /* Pengaman UI jika izin lihat harga/HPP dimatikan */
+    body.hide-prices .price-sensitive,
+    body.hide-prices #kpi-stock-value {
+      filter: blur(6px);
+      user-select: none;
+      pointer-events: none;
+    }
+  </style>
 </head>
 <body class="antialiased selection:bg-swiss-red selection:text-white">
 
@@ -612,6 +625,12 @@
           class="w-full bg-swiss-ink text-white font-semibold uppercase tracking-wider text-xs py-3.5 hover:bg-swiss-red transition-colors">
           Masuk ke Sistem →
         </button>
+        <div class="mt-4 pt-4 border-t border-swiss-line text-center">
+          <p class="text-xs text-swiss-muted mb-2">Staf baru belum punya akses?</p>
+          <button type="button" onclick="openRegisterModal()" class="w-full border border-swiss-ink bg-white py-2 text-xs font-mono font-semibold hover:bg-neutral-100">
+            Daftar Akun Staf (Perlu Persetujuan Admin)
+          </button>
+        </div>
       </form>
       <p id="login-error" class="mt-4 text-xs text-swiss-red font-mono hidden"></p>
     </div>
@@ -1556,6 +1575,21 @@
             Simpan Pengaturan
           </button>
         </form>
+        <!-- PANEL MANAJEMEN AKUN & HAK AKSES (KHUSUS SUPER ADMIN) -->
+        <div id="admin-users-section" class="hidden bg-white border border-swiss-ink p-5 space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-swiss-line pb-3">
+            <div>
+              <p class="font-mono text-[10px] uppercase text-swiss-red font-semibold">Super Admin Only • Terproteksi RLS</p>
+              <h3 class="font-bold text-sm uppercase tracking-wider">Manajemen Akun & Hak Akses</h3>
+            </div>
+            <button type="button" onclick="loadUserManagement()" class="border border-swiss-ink bg-white px-3 py-1.5 text-xs font-mono font-semibold hover:bg-neutral-100 self-start">
+              ↻ Muat Ulang Daftar
+            </button>
+          </div>
+          <div id="admin-users-list" class="space-y-3">
+            <p class="text-xs font-mono text-swiss-muted">Memuat daftar akun...</p>
+          </div>
+        </div>
       </section>
 
     </main>
@@ -1714,5 +1748,35 @@
   </div>
   <script src="config.js"></script>
   <script src="app.js"></script>
+  <!-- MODAL DAFTAR AKUN STAF -->
+  <div id="modal-register" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-white border-2 border-swiss-ink w-full max-w-md p-6 space-y-4">
+      <div class="flex items-center justify-between border-b border-swiss-line pb-3">
+        <div>
+          <p class="font-mono text-[10px] uppercase text-swiss-muted">Registrasi Staf</p>
+          <h3 class="font-extrabold text-lg uppercase">Buat Akun Baru</h3>
+        </div>
+        <button type="button" onclick="closeRegisterModal()" class="font-mono text-sm font-bold px-2 py-1 hover:text-swiss-red">✕</button>
+      </div>
+      <form id="register-form" onsubmit="handleRegister(event)" class="space-y-3">
+        <div>
+          <label class="block font-mono text-[10px] uppercase mb-1">Nama Lengkap</label>
+          <input type="text" id="reg-name" required class="swiss-input text-xs" placeholder="Contoh: Budi Gudang" />
+        </div>
+        <div>
+          <label class="block font-mono text-[10px] uppercase mb-1">Email</label>
+          <input type="email" id="reg-email" required class="swiss-input text-xs" placeholder="nama@email.com" />
+        </div>
+        <div>
+          <label class="block font-mono text-[10px] uppercase mb-1">Password (min. 6 karakter)</label>
+          <input type="password" id="reg-password" required minlength="6" class="swiss-input text-xs" placeholder="••••••••" />
+        </div>
+        <p class="text-[11px] text-swiss-muted font-mono">Setelah mendaftar, akun tetap terkunci hingga diaktifkan oleh Admin.</p>
+        <button type="submit" id="btn-register-submit" class="w-full bg-swiss-ink text-white py-2.5 text-xs font-mono font-bold uppercase hover:bg-swiss-red">
+          Kirim Permintaan Akun
+        </button>
+      </form>
+    </div>
+  </div>
 </body>
 </html>
