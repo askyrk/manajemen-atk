@@ -3246,6 +3246,40 @@ showApp = async function () {
   await _origShowAppRBAC();
   applyUserPermissions();
 };
+// Guard showApp: Cek status aktif & muat profil izin dari Supabase
+const _origShowAppRBAC = showApp;
+showApp = async function (...args) {
+  const { data: authData } = await db.auth.getUser();
+  const activeUser = state.user || args[0] || authData?.user;
+  if (!activeUser) return;
+  state.user = activeUser;
+
+  const { data: profile, error } = await db
+    .from('user_profiles')
+    .select('*')
+    .eq('id', activeUser.id)
+    .maybeSingle();
+
+  if (error) {
+    await db.auth.signOut();
+    showToast('Error profil DB: ' + error.message, 'error');
+    document.getElementById('app-screen')?.classList.add('hidden');
+    document.getElementById('login-screen')?.classList.remove('hidden');
+    return;
+  }
+
+  if (!profile || !profile.is_active) {
+    await db.auth.signOut();
+    showToast('Akun Anda belum aktif / menunggu persetujuan Admin.', 'error');
+    document.getElementById('app-screen')?.classList.add('hidden');
+    document.getElementById('login-screen')?.classList.remove('hidden');
+    return;
+  }
+
+  state.profile = profile;
+  await _origShowAppRBAC(...args);
+  applyUserPermissions();
+};
 
 // Guard switchTab: Blokir pindah tab lewat Console/Inspect Element
 const _origSwitchTabRBAC = switchTab;
