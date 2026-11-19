@@ -120,6 +120,9 @@
           <button onclick="switchTab('reports')" data-tab="reports" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
             <span>04 / Kartu Stok & Arsip</span>
           </button>
+          <button onclick="switchTab('recap'); loadRecapData();" data-tab="recap" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
+            <span>04B / Rekap Divisi & Toko</span>
+          </button>
           <button onclick="switchTab('master')" data-tab="master" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
             <span>05 / Kategori & Partner</span>
           </button>
@@ -400,7 +403,127 @@
           <div id="receipt-gallery" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
         </div>
       </section>
+<!-- ============ TAB 4B: REKAP OTOMATIS DIVISI & SUPPLIER ============ -->
+      <section id="tab-recap" class="tab-section hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-end justify-between border-b-2 border-swiss-ink pb-4 gap-3">
+          <div>
+            <p class="font-mono text-xs uppercase tracking-widest text-swiss-muted">04B — Laporan Otomatis</p>
+            <h2 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight">Rekap Divisi & Supplier</h2>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 no-print">
+            <select id="recap-period-mode" onchange="onRecapModeChange()" class="swiss-input py-2 text-xs font-mono w-auto">
+              <option value="MONTH">Per Bulan</option>
+              <option value="ALL">Semua Periode</option>
+            </select>
+            <input type="month" id="recap-month" onchange="loadRecapData()" class="swiss-input py-2 text-xs font-mono w-auto" />
+            <button onclick="exportRecapCSV()" class="border border-swiss-ink bg-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-ink hover:text-white">
+              Export CSV
+            </button>
+            <button onclick="window.print()" class="bg-swiss-ink text-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-red">
+              Cetak
+            </button>
+          </div>
+        </div>
 
+        <!-- KPI Ringkasan Periode -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="bg-white border border-swiss-ink p-4">
+            <p class="font-mono text-[11px] uppercase text-swiss-muted">Total Belanja (Masuk)</p>
+            <p id="recap-kpi-in-val" class="text-lg md:text-2xl font-extrabold font-mono mt-1 truncate">Rp 0</p>
+            <p id="recap-kpi-in-tx" class="font-mono text-[10px] text-swiss-muted mt-1">0 nota</p>
+          </div>
+          <div class="bg-white border border-swiss-ink p-4">
+            <p class="font-mono text-[11px] uppercase text-swiss-red font-semibold">Estimasi Pemakaian (Keluar)</p>
+            <p id="recap-kpi-out-val" class="text-lg md:text-2xl font-extrabold font-mono text-swiss-red mt-1 truncate">Rp 0</p>
+            <p id="recap-kpi-out-tx" class="font-mono text-[10px] text-swiss-muted mt-1">0 nota</p>
+          </div>
+          <div class="bg-white border border-swiss-ink p-4">
+            <p class="font-mono text-[11px] uppercase text-swiss-muted">Supplier Terbesar</p>
+            <p id="recap-kpi-top-sup" class="text-sm font-extrabold uppercase mt-2 truncate">-</p>
+            <p id="recap-kpi-top-sup-val" class="font-mono text-[10px] text-swiss-muted mt-1">Rp 0</p>
+          </div>
+          <div class="bg-white border border-swiss-ink p-4">
+            <p class="font-mono text-[11px] uppercase text-swiss-muted">Divisi Teraktif</p>
+            <p id="recap-kpi-top-div" class="text-sm font-extrabold uppercase mt-2 truncate">-</p>
+            <p id="recap-kpi-top-div-val" class="font-mono text-[10px] text-swiss-muted mt-1">Rp 0</p>
+          </div>
+        </div>
+
+        <!-- 2 Tabel Utama: Supplier & Divisi -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <!-- Rekap Belanja per Supplier -->
+          <div class="bg-white border border-swiss-ink">
+            <div class="px-4 py-3 border-b border-swiss-ink flex items-center justify-between bg-neutral-50">
+              <h3 class="font-bold text-xs uppercase tracking-wider">Rekap Belanja per Supplier (Masuk)</h3>
+              <span class="font-mono text-[10px] text-swiss-muted">Klik baris untuk rincian</span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead class="border-b border-swiss-line font-mono uppercase text-[10px] text-swiss-muted">
+                  <tr>
+                    <th class="p-3">Supplier / Toko</th>
+                    <th class="p-3 text-center">Nota</th>
+                    <th class="p-3 text-right">Total Belanja</th>
+                  </tr>
+                </thead>
+                <tbody id="recap-supplier-body" class="divide-y divide-swiss-line"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Rekap Pemakaian per Divisi -->
+          <div class="bg-white border border-swiss-ink">
+            <div class="px-4 py-3 border-b border-swiss-ink flex items-center justify-between bg-neutral-50">
+              <h3 class="font-bold text-xs uppercase tracking-wider">Rekap Pemakaian per Divisi / Unit (Keluar)</h3>
+              <span class="font-mono text-[10px] text-swiss-muted">Klik baris untuk rincian</span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead class="border-b border-swiss-line font-mono uppercase text-[10px] text-swiss-muted">
+                  <tr>
+                    <th class="p-3">Divisi / Penerima</th>
+                    <th class="p-3 text-center">Nota</th>
+                    <th class="p-3 text-right">Nilai / Estimasi</th>
+                  </tr>
+                </thead>
+                <tbody id="recap-division-body" class="divide-y divide-swiss-line"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Panel Rincian Barang per Partner Terpilih -->
+        <div id="recap-detail-panel" class="hidden bg-white border-2 border-swiss-ink p-4 md:p-6 space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-swiss-ink pb-3 gap-2">
+            <div>
+              <p id="recap-detail-type" class="font-mono text-[10px] uppercase tracking-widest text-swiss-red font-semibold"></p>
+              <h3 id="recap-detail-title" class="text-lg font-extrabold uppercase"></h3>
+            </div>
+            <div class="flex gap-2 no-print">
+              <button onclick="exportRecapDetailCSV()" class="border border-swiss-ink px-3 py-1.5 text-xs font-mono font-semibold hover:bg-swiss-ink hover:text-white">
+                Export Rincian (CSV)
+              </button>
+              <button onclick="closeRecapDetail()" class="border border-swiss-ink px-3 py-1.5 text-xs font-mono font-bold hover:bg-swiss-red hover:text-white">
+                Tutup ✕
+              </button>
+            </div>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="border-b border-swiss-line bg-neutral-50 font-mono uppercase text-[10px] text-swiss-muted">
+                <tr>
+                  <th class="p-2.5">SKU</th>
+                  <th class="p-2.5">Nama Barang</th>
+                  <th class="p-2.5 text-center">Frekuensi</th>
+                  <th class="p-2.5 text-right">Total Qty (Base)</th>
+                  <th class="p-2.5 text-right">Total Nilai / Estimasi</th>
+                </tr>
+              </thead>
+              <tbody id="recap-detail-body" class="divide-y divide-swiss-line"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
       <!-- ============ TAB 5: KATEGORI & PARTNER ============ -->
       <section id="tab-master" class="tab-section hidden space-y-6">
         <div class="border-b-2 border-swiss-ink pb-4">
