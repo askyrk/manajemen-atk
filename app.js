@@ -38,7 +38,6 @@ function showToast(message, type = 'info') {
   }, 3500);
 }
 
-// Konversi saldo base_unit menjadi pecahan satuan besar otomatis (misal: 9 RIM -> "1 BOX, 4 RIM")
 function formatStockBreakdown(item) {
   const total = Number(item.current_stock) || 0;
   const baseUnit = item.base_unit || 'PCS';
@@ -100,7 +99,6 @@ async function showApp() {
   document.getElementById('app-screen').classList.remove('hidden');
   document.getElementById('user-email-display').textContent = state.user.email;
 
-  // Set default tanggal & filter bulan hari ini
   const today = new Date().toISOString().split('T')[0];
   document.getElementById('tx-date').value = today;
   document.getElementById('filter-tx-month').value = today.substring(0, 7);
@@ -141,7 +139,6 @@ async function logout() {
   showLogin();
 }
 
-// Mobile Menu Toggle
 document.getElementById('mobile-menu-toggle').addEventListener('click', () => {
   document.getElementById('sidebar').classList.toggle('hidden');
 });
@@ -157,7 +154,6 @@ function switchTab(tabName) {
     b.classList.toggle('active', b.dataset.tab === tabName);
   });
 
-  // Tutup menu di HP setelah klik
   if (window.innerWidth < 768) {
     document.getElementById('sidebar').classList.add('hidden');
   }
@@ -206,7 +202,6 @@ function applyWhiteLabel() {
   const loginTitle = document.getElementById('login-company-name');
   if (loginTitle) loginTitle.textContent = s.company_name || 'SISTEM INVENTARIS ATK';
 
-  // Isi form pengaturan
   document.getElementById('set-company').value = s.company_name || '';
   document.getElementById('set-subtitle').value = s.subtitle || '';
   document.getElementById('set-address').value = s.address || '';
@@ -215,18 +210,15 @@ function applyWhiteLabel() {
 }
 
 function populateDropdowns() {
-  // Filter kategori di halaman Master Barang
   const filterCat = document.getElementById('filter-item-cat');
   const prevCat = filterCat.value;
   filterCat.innerHTML = '<option value="">Semua Kategori</option>' +
     state.categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
   filterCat.value = prevCat;
 
-  // Pilihan kategori di Modal Barang
   document.getElementById('item-category').innerHTML = '<option value="">-- Tanpa Kategori --</option>' +
     state.categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
 
-  // Pilihan barang di Kartu Stok
   const repItem = document.getElementById('report-item-select');
   const prevRep = repItem.value;
   repItem.innerHTML = '<option value="">-- Pilih Barang --</option>' +
@@ -250,7 +242,6 @@ function renderDashboard() {
   document.getElementById('kpi-month-tx').textContent = monthTx.length;
   document.getElementById('kpi-stock-value').textContent = formatRupiah(totalValue);
 
-  // Tabel Stok Menipis
   const lowBody = document.getElementById('dash-low-stock-body');
   if (lowItems.length === 0) {
     lowBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-swiss-muted font-mono">Semua stok dalam batas aman.</td></tr>';
@@ -264,7 +255,6 @@ function renderDashboard() {
     `).join('');
   }
 
-  // Tabel Transaksi Terakhir
   const recentBody = document.getElementById('dash-recent-tx-body');
   if (state.transactions.length === 0) {
     recentBody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-swiss-muted font-mono">Belum ada transaksi.</td></tr>';
@@ -393,7 +383,7 @@ function onCartItemChange(rowId) {
 function recalcRow(rowId) {
   const row = document.getElementById(rowId);
   const qty = Number(row.querySelector('.cart-qty').value) || 0;
-  const [factor, unitName] = row.querySelector('.cart-unit').value.split('|');
+  const [factor] = row.querySelector('.cart-unit').value.split('|');
   const baseQty = qty * (Number(factor) || 1);
   const preview = row.querySelector('.cart-base-preview');
   if (preview) preview.textContent = `= ${baseQty} base`;
@@ -407,7 +397,6 @@ function recalcGrandTotal() {
   document.getElementById('tx-grand-total').textContent = formatRupiah(total);
 }
 
-// Kompres gambar di browser sebelum dikirim ke Apps Script
 function compressImageToBase64(file, maxWidth = 1280, quality = 0.75) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -477,7 +466,6 @@ async function saveTransaction() {
     return showToast('Tanggal dan No. Bukti wajib diisi.', 'error');
   }
 
-  // Validasi isi keranjang
   const rows = Array.from(document.querySelectorAll('.cart-row'));
   const itemsPayload = [];
   for (const r of rows) {
@@ -520,7 +508,6 @@ async function saveTransaction() {
       receiptUrl = await uploadReceiptToDrive(receiptFile, txDate, refNo);
     }
 
-    // 1. Simpan Header Transaksi
     const { data: txData, error: txErr } = await db
       .from('transactions')
       .insert([{
@@ -537,7 +524,6 @@ async function saveTransaction() {
 
     if (txErr) throw txErr;
 
-    // 2. Simpan Rincian Barang (Database Trigger otomatis mengubah stok)
     const detailRows = itemsPayload.map(p => ({ ...p, transaction_id: txData.id }));
     const { error: detErr } = await db.from('transaction_items').insert(detailRows);
     if (detErr) throw detErr;
@@ -749,7 +735,6 @@ document.getElementById('form-item').addEventListener('submit', async (e) => {
       savedId = data.id;
     }
 
-    // Simpan konversi satuan
     const unitRows = Array.from(document.querySelectorAll('.unit-row'));
     const unitsPayload = unitRows.map(r => ({
       item_id: savedId,
@@ -959,8 +944,6 @@ document.getElementById('form-settings').addEventListener('submit', async (e) =>
   await loadAllData();
 });
 
-// Mulai aplikasi
-checkSession();
 // ==========================================
 // 7. IMPORT MASSAL MASTER BARANG (EXCEL / CSV)
 // ==========================================
@@ -1031,7 +1014,6 @@ function handleImportFile(event) {
       const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
       const rawRows = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
 
-      // Normalisasi & deduplikasi berdasarkan SKU
       const skuMap = new Map();
       rawRows.forEach(raw => {
         const r = normalizeRowKeys(raw);
@@ -1087,7 +1069,6 @@ async function executeBulkImport() {
   btn.textContent = 'Mengimport data...';
 
   try {
-    // 1. Cek & buat kategori baru secara otomatis jika belum ada
     const existingCatMap = new Map(state.categories.map(c => [c.name.toLowerCase(), c.id]));
     const newCategories = [];
     const seenNewCats = new Set();
@@ -1109,7 +1090,6 @@ async function executeBulkImport() {
       (insertedCats || []).forEach(c => existingCatMap.set(c.name.toLowerCase(), c.id));
     }
 
-    // 2. Siapkan payload items (tanpa menyentuh current_stock agar saldo lama tetap aman)
     const itemsPayload = pendingImportRows.map(r => ({
       sku: r.sku,
       name: r.name,
@@ -1119,7 +1099,6 @@ async function executeBulkImport() {
       location: r.location
     }));
 
-    // Upsert per 100 baris agar stabil untuk file besar
     const savedItemsMap = new Map();
     for (let i = 0; i < itemsPayload.length; i += 100) {
       const chunk = itemsPayload.slice(i, i + 100);
@@ -1131,7 +1110,6 @@ async function executeBulkImport() {
       (savedChunk || []).forEach(it => savedItemsMap.set(it.sku, it.id));
     }
 
-    // 3. Simpan konversi satuan besar (jika diisi di Excel)
     const unitsMap = new Map();
     pendingImportRows.forEach(r => {
       const itemId = savedItemsMap.get(r.sku);
@@ -1162,6 +1140,7 @@ async function executeBulkImport() {
     btn.textContent = 'Mulai Import ke Database';
   }
 }
+
 // ==========================================
 // 8. REKAP OTOMATIS PER DIVISI & SUPPLIER
 // ==========================================
@@ -1232,7 +1211,6 @@ function processAndRenderRecap() {
     const partnerKey = tx.partner_id || 'NONE';
     const partnerName = tx.partners?.name || (row.transaction_type === 'IN' ? 'Tanpa Supplier / Umum' : 'Tanpa Divisi / Umum');
 
-    // Nilai rupiah: gunakan subtotal jika diisi; jika 0 pada transaksi OUT, estimasi dari avg_cost
     const rawSub = Number(row.subtotal) || 0;
     const estVal = rawSub > 0 ? rawSub : (Math.abs(Number(row.base_qty) || 0) * (Number(item.avg_cost) || 0));
 
@@ -1280,7 +1258,6 @@ function processAndRenderRecap() {
   recapState.suppliers = Array.from(supMap.values()).sort((a, b) => b.totalValue - a.totalValue);
   recapState.divisions = Array.from(divMap.values()).sort((a, b) => b.totalValue - a.totalValue);
 
-  // Update KPI
   document.getElementById('recap-kpi-in-val').textContent = formatRupiah(totalInVal);
   document.getElementById('recap-kpi-in-tx').textContent = `${inTxSet.size} nota masuk`;
   document.getElementById('recap-kpi-out-val').textContent = formatRupiah(totalOutVal);
@@ -1294,7 +1271,6 @@ function processAndRenderRecap() {
   document.getElementById('recap-kpi-top-div').textContent = topDiv ? topDiv.name : '-';
   document.getElementById('recap-kpi-top-div-val').textContent = topDiv ? formatRupiah(topDiv.totalValue) : 'Rp 0';
 
-  // Render Tabel Supplier
   const supBody = document.getElementById('recap-supplier-body');
   if (recapState.suppliers.length === 0) {
     supBody.innerHTML = '<tr><td colspan="3" class="p-5 text-center font-mono text-swiss-muted">Belum ada transaksi masuk di periode ini.</td></tr>';
@@ -1308,7 +1284,6 @@ function processAndRenderRecap() {
     `).join('');
   }
 
-  // Render Tabel Divisi
   const divBody = document.getElementById('recap-division-body');
   if (recapState.divisions.length === 0) {
     divBody.innerHTML = '<tr><td colspan="3" class="p-5 text-center font-mono text-swiss-muted">Belum ada transaksi keluar di periode ini.</td></tr>';
@@ -1374,6 +1349,7 @@ function exportRecapDetailCSV() {
   ]);
   downloadCSV(`Rincian_${d.name.replace(/[^a-zA-Z0-9]/g, '_')}.csv`, [header, ...rows]);
 }
+
 // ==========================================
 // 9. ANALISA PERBANDINGAN HARGA SUPPLIER
 // ==========================================
@@ -1401,10 +1377,8 @@ async function loadPriceAnalysis() {
     }
 
     const { data, error } = await query;
-
     if (error) throw error;
 
-    // Urutkan kronologis terbaru lebih dulu
     const rows = (data || []).sort((a, b) => {
       const da = a.transactions?.transaction_date || '';
       const dbDate = b.transactions?.transaction_date || '';
@@ -1529,12 +1503,12 @@ function renderPriceAnalysisTable() {
         <div class="font-mono text-[10px] text-swiss-muted">${escapeHtml(x.sku)} • per ${escapeHtml(x.base_unit)}</div>
       </td>
       <td class="p-3">
-        ? `<div class="font-mono font-semibold text-swiss-red">${formatRupiah(x.mostExpensive.latestPrice)}</div><div class="text-[11px] text-swiss-muted">${escapeHtml(x.mostExpensive.name)} <span class="font-mono text-[10px]">(${x.mostExpensive.latestDate})</span></div>`
+        <div class="font-mono font-bold">${formatRupiah(x.cheapest.latestPrice)}</div>
         <div class="text-[11px] text-swiss-muted">${escapeHtml(x.cheapest.name)} <span class="font-mono text-[10px]">(${x.cheapest.latestDate})</span></div>
       </td>
       <td class="p-3">
         ${x.suppliers.length > 1
-          ? `<div class="font-mono font-semibold text-swiss-red">${formatRupiah(x.mostExpensive.latestPrice)}</div><div class="text-[11px] text-swiss-muted">${escapeHtml(x.mostExpensive.name)}</div>`
+          ? `<div class="font-mono font-semibold text-swiss-red">${formatRupiah(x.mostExpensive.latestPrice)}</div><div class="text-[11px] text-swiss-muted">${escapeHtml(x.mostExpensive.name)} <span class="font-mono text-[10px]">(${x.mostExpensive.latestDate})</span></div>`
           : '<span class="font-mono text-[11px] text-swiss-muted">- (1 toko)</span>'}
       </td>
       <td class="p-3 text-right font-mono">
@@ -1604,3 +1578,6 @@ function exportPriceAnalysisCSV() {
   ]);
   downloadCSV(`Analisa_Harga_Supplier_${new Date().toISOString().split('T')[0]}.csv`, [header, ...rows]);
 }
+
+// Mulai aplikasi
+checkSession();
