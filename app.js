@@ -539,6 +539,49 @@ async function uploadReceiptToDrive(file, dateStr, refNo) {
   return result.url;
 }
 
+function parseReceiptUrls(raw) {
+  if (!raw) return [];
+  const str = String(raw).trim();
+  if (!str) return [];
+  if (str.startsWith('[')) {
+    try {
+      const arr = JSON.parse(str);
+      if (Array.isArray(arr)) return arr.filter(Boolean);
+    } catch (_) {}
+  }
+  return str.split(/[\n|]+/).map(s => s.trim()).filter(Boolean);
+}
+
+async function uploadReceiptToDrive(file, dateStr, refNo, indexSuffix = '') {
+  const url = (state.settings.gdrive_script_url || '').trim();
+  const secretKey = (state.settings.gdrive_secret_key || '').trim();
+  if (!url || !secretKey) {
+    throw new Error('URL Apps Script atau Secret Key belum diisi di menu 06 / Pengaturan.');
+  }
+
+  const base64 = await compressImageToBase64(file);
+  const cleanRef = refNo.replace(/[^a-zA-Z0-9-_]/g, '');
+  const fileName = `${dateStr}_${cleanRef}${indexSuffix}.jpg`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({
+      secretKey,
+      date: dateStr,
+      fileName,
+      mimeType: 'image/jpeg',
+      base64
+    })
+  });
+
+  const result = await response.json();
+  if (result.status !== 'ok') {
+    throw new Error(result.message || 'Gagal upload ke Google Drive.');
+  }
+  return result.url;
+}
+
 async function saveTransaction() {
   const btn = document.getElementById('btn-save-tx');
   const type = document.getElementById('tx-type').value;
@@ -546,7 +589,7 @@ async function saveTransaction() {
   const refNo = document.getElementById('tx-ref').value.trim();
   const partnerId = document.getElementById('tx-partner').value || null;
   const notes = document.getElementById('tx-notes').value.trim();
-  const receiptFile = document.getElementById('tx-receipt-file').files[0];
+  const receiptFiles = Array.from(document.getElementById('tx-receipt-file').files || []);
 
   if (!txDate || !refNo) {
     return showToast('Tanggal dan No. Bukti wajib diisi.', 'error');
@@ -589,13 +632,23 @@ async function saveTransaction() {
   }
 
   btn.disabled = true;
-  btn.textContent = receiptFile ? 'Mengupload foto nota...' : 'Menyimpan transaksi...';
 
   try {
     let receiptUrl = null;
-    if (receiptFile) {
-      receiptUrl = await uploadReceiptToDrive(receiptFile, txDate, refNo);
+    if (receiptFiles.length > 0) {
+      const uploadedUrls = [];
+      for (let i = 0; i < receiptFiles.length; i++) {
+        btn.textContent = receiptFiles.length > 1
+          ? `Mengupload foto ${i + 1}/${receiptFiles.length}...`
+          : 'Mengupload foto nota...';
+        const suffix = receiptFiles.length > 1 ? `_${i + 1}` : '';
+        const url = await uploadReceiptToDrive(receiptFiles[i], txDate, refNo, suffix);
+        uploadedUrls.push(url);
+      }
+      receiptUrl = uploadedUrls.join(' | ');
     }
+
+    btn.textContent = 'Menyimpan transaksi...';
 
     const { data: txData, error: txErr } = await db
       .from('transactions')
@@ -645,21 +698,28 @@ function renderTransactionsTable() {
     return;
   }
 
-  tbody.innerHTML = filtered.map(t => `
-    <tr class="hover:bg-neutral-50">
-      <td class="p-3 font-mono">${t.transaction_date}</td>
-      <td class="p-3 font-mono font-semibold">${escapeHtml(t.reference_no)}</td>
-      <td class="p-3">${renderTypeBadge(t.type)}</td>
-      <td class="p-3">${escapeHtml(t.partners?.name || '-')}</td>
-      <td class="p-3">
-        ${t.receipt_url ? `<a href="${escapeHtml(t.receipt_url)}" target="_blank" class="font-mono text-[11px] underline text-swiss-red">Lihat Nota ↗</a>` : '<span class="text-swiss-muted">-</span>'}
-      </td>
-      <td class="p-3 text-right space-x-2">
-        <button onclick="openTxDetail('${t.id}')" class="font-mono text-[11px] underline">Detail / Cetak</button>
-        <button onclick="deleteTransaction('${t.id}', '${escapeHtml(t.reference_no)}')" class="font-mono text-[11px] text-swiss-red underline">Hapus</button>
-      </td>
-    </tr>
-  `).join('');
+  tbody.innerHTML = filtered.map(t => {
+    const urls = parseReceiptUrls(t.receipt_url);
+    const receiptHtml = urls.length === 0
+      ? '<span class="text-swiss-muted">-</span>'
+      : urls.length === 1
+        ? `<a href="${escapeHtml(urls[0])}" target="_blank" class="font-mono text-[11px] underline text-swiss-red">Lihat Nota ↗</a>`
+        : `<div class="flex flex-wrap gap-x-2 gap-y-1">${urls.map((u, idx) => `<a href="${escapeHtml(u)}" target="_blank" class="font-mono text-[11px] underline text-swiss-red">Nota ${idx + 1} ↗</a>`).join('')}</div>`;
+
+    return `
+      <tr class="hover:bg-neutral-50">
+        <td class="p-3 font-mono">${t.transaction_date}</td>
+        <td class="p-3 font-mono font-semibold">${escapeHtml(t.reference_no)}</td>
+        <td class="p-3">${renderTypeBadge(t.type)}</td>
+        <td class="p-3">${escapeHtml(t.partners?.name || '-')}</td>
+        <td class="p-3">${receiptHtml}</td>
+        <td class="p-3 text-right space-x-2">
+          <button onclick="openTxDetail('${t.id}')" class="font-mono text-[11px] underline">Detail / Cetak</button>
+          <button onclick="deleteTransaction('${t.id}', '${escapeHtml(t.reference_no)}')" class="font-mono text-[11px] text-swiss-red underline">Hapus</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
 }
 
 async function openTxDetail(txId) {
@@ -675,13 +735,22 @@ async function openTxDetail(txId) {
 
   document.getElementById('detail-tx-ref').textContent = `${tx.reference_no} — ${tx.transaction_date}`;
   const grandTotal = (details || []).reduce((s, d) => s + Number(d.subtotal || 0), 0);
+  const receiptUrls = parseReceiptUrls(tx.receipt_url);
 
   document.getElementById('detail-tx-content').innerHTML = `
     <div class="grid grid-cols-2 gap-2 border-b border-swiss-line pb-3">
       <div><span class="text-swiss-muted font-mono">JENIS:</span> ${renderTypeBadge(tx.type)}</div>
       <div><span class="text-swiss-muted font-mono">PARTNER:</span> <strong>${escapeHtml(tx.partners?.name || '-')}</strong></div>
       <div class="col-span-2"><span class="text-swiss-muted font-mono">CATATAN:</span> ${escapeHtml(tx.notes || '-')}</div>
-      ${tx.receipt_url ? `<div class="col-span-2 no-print"><a href="${escapeHtml(tx.receipt_url)}" target="_blank" class="text-swiss-red font-mono underline">Buka Foto Nota di Google Drive ↗</a></div>` : ''}
+      ${receiptUrls.length > 0 ? `
+        <div class="col-span-2 no-print flex flex-wrap gap-2 pt-1">
+          ${receiptUrls.map((u, idx) => `
+            <a href="${escapeHtml(u)}" target="_blank" class="border border-swiss-red text-swiss-red px-2.5 py-1 text-[11px] font-mono hover:bg-swiss-red hover:text-white transition-colors">
+              ${receiptUrls.length > 1 ? `Buka Foto Nota ${idx + 1} ↗` : 'Buka Foto Nota di Google Drive ↗'}
+            </a>
+          `).join('')}
+        </div>
+      ` : ''}
     </div>
     <table class="w-full text-left border border-swiss-line">
       <thead class="bg-neutral-50 border-b border-swiss-line font-mono text-[10px] uppercase">
@@ -948,27 +1017,32 @@ async function loadStockCard() {
 
 function renderReceiptGallery() {
   const gallery = document.getElementById('receipt-gallery');
-  const withReceipts = state.transactions.filter(t => t.receipt_url);
+  const withReceipts = state.transactions.filter(t => parseReceiptUrls(t.receipt_url).length > 0);
   if (withReceipts.length === 0) {
     gallery.innerHTML = '<p class="text-xs font-mono text-swiss-muted col-span-full">Belum ada foto nota yang diunggah.</p>';
     return;
   }
 
-  gallery.innerHTML = withReceipts.map(t => `
-    <div class="border border-swiss-ink p-4 bg-neutral-50 flex flex-col justify-between gap-3">
-      <div>
-        <div class="flex items-center justify-between mb-1">
-          <span class="font-mono text-xs font-bold">${escapeHtml(t.reference_no)}</span>
-          ${renderTypeBadge(t.type)}
+  gallery.innerHTML = withReceipts.map(t => {
+    const urls = parseReceiptUrls(t.receipt_url);
+    const buttonsHtml = urls.length === 1
+      ? `<a href="${escapeHtml(urls[0])}" target="_blank" class="block text-center bg-swiss-ink text-white py-2 text-xs font-mono uppercase hover:bg-swiss-red transition-colors">Buka Foto Nota ↗</a>`
+      : `<div class="grid grid-cols-2 gap-1.5">${urls.map((u, idx) => `<a href="${escapeHtml(u)}" target="_blank" class="block text-center bg-swiss-ink text-white py-1.5 text-[11px] font-mono uppercase hover:bg-swiss-red transition-colors">Foto ${idx + 1} ↗</a>`).join('')}</div>`;
+
+    return `
+      <div class="border border-swiss-ink p-4 bg-neutral-50 flex flex-col justify-between gap-3">
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <span class="font-mono text-xs font-bold">${escapeHtml(t.reference_no)}</span>
+            ${renderTypeBadge(t.type)}
+          </div>
+          <p class="font-mono text-[11px] text-swiss-muted">${t.transaction_date}${urls.length > 1 ? ` • ${urls.length} foto` : ''}</p>
+          <p class="text-xs font-semibold mt-1">${escapeHtml(t.partners?.name || 'Tanpa Partner')}</p>
         </div>
-        <p class="font-mono text-[11px] text-swiss-muted">${t.transaction_date}</p>
-        <p class="text-xs font-semibold mt-1">${escapeHtml(t.partners?.name || 'Tanpa Partner')}</p>
+        ${buttonsHtml}
       </div>
-      <a href="${escapeHtml(t.receipt_url)}" target="_blank" class="block text-center bg-swiss-ink text-white py-2 text-xs font-mono uppercase hover:bg-swiss-red transition-colors">
-        Buka Foto Nota ↗
-      </a>
-    </div>
-  `).join('');
+    `;
+  }).join('');
 }
 
 function downloadCSV(filename, rows) {
