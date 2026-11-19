@@ -77,14 +77,51 @@ function formatStockPlain(item) {
   return formatStockBreakdown(item).replace(/<[^>]+>/g, '');
 }
 
-// Cari harga jual efektif per satuan terkecil (prioritas: Harga Khusus Partner -> Harga Jual Standar)
-function getEffectiveSellPrice(itemId, partnerId) {
-  if (partnerId) {
-    const custom = state.partnerPrices.find(pp => pp.partner_id === partnerId && pp.item_id === itemId);
-    if (custom) return { price: Number(custom.custom_price) || 0, isCustom: true };
-  }
+// Urutan Prioritas Auto-Fill Harga Jual:
+// 1. Harga Khusus Customer untuk satuan yang dipilih (misal: BOX / PAK / PCS)
+// 2. Harga Jual Satuan Besar di Master Barang (jika satuan besar & diisi)
+// 3. Harga Khusus Customer untuk satuan terkecil (base_unit) x Isi
+// 4. Harga Jual Standar satuan terkecil x Isi
+function calculateAutoSellSubtotal(itemId, partnerId, inputQty, inputUnit, factor) {
   const item = state.items.find(i => i.id === itemId);
-  return { price: Number(item?.default_sell_price) || 0, isCustom: false };
+  if (!item || !inputQty) return 0;
+
+  const qty = Number(inputQty) || 0;
+  const f = Number(factor) || 1;
+  const unitUpper = String(inputUnit || item.base_unit).toUpperCase();
+  const baseUpper = String(item.base_unit || 'PCS').toUpperCase();
+
+  // 1. Cek Harga Khusus Customer sesuai satuan yang dipilih
+  if (partnerId) {
+    const exactCustom = state.partnerPrices.find(
+      pp => pp.partner_id === partnerId && pp.item_id === itemId && String(pp.unit_name || '').toUpperCase() === unitUpper
+    );
+    if (exactCustom && Number(exactCustom.custom_price) > 0) {
+      return qty * Number(exactCustom.custom_price);
+    }
+  }
+
+  // 2. Jika satuan besar & punya harga jual khusus grosir/pak di Master Barang
+  if (unitUpper !== baseUpper) {
+    const unitDef = (item.item_units || []).find(u => String(u.unit_name || '').toUpperCase() === unitUpper);
+    if (unitDef && Number(unitDef.sell_price) > 0) {
+      return qty * Number(unitDef.sell_price);
+    }
+  }
+
+  // 3. Cek Harga Khusus Customer pada satuan terkecil (base_unit) x faktor konversi
+  if (partnerId) {
+    const baseCustom = state.partnerPrices.find(
+      pp => pp.partner_id === partnerId && pp.item_id === itemId && String(pp.unit_name || '').toUpperCase() === baseUpper
+    );
+    if (baseCustom && Number(baseCustom.custom_price) > 0) {
+      return (qty * f) * Number(baseCustom.custom_price);
+    }
+  }
+
+  // 4. Fallback ke Harga Jual Standar satuan terkecil x faktor konversi
+  const stdPrice = Number(item.default_sell_price) || 0;
+  return stdPrice > 0 ? (qty * f * stdPrice) : 0;
 }
 
 // ==========================================
@@ -186,7 +223,7 @@ async function loadAllData() {
       db.from('partners').select('*').order('name'),
       db.from('items').select('*, categories(name), item_units(*)').order('name'),
       db.from('transactions').select('*, partners(name, type)').order('transaction_date', { ascending: false }).order('created_at', { ascending: false }).limit(200),
-      db.from('partner_prices').select('*, partners(name, type), items(sku, name, base_unit, avg_cost, default_sell_price)').order('updated_at', { ascending: false })
+      db.from('partner_prices').select('*, partners(name, type), items(sku, name, base_unit, avg_cost, default_sell_price, item_units(*))').order('updated_at', { ascending: false })
     ]);
 
     if (setRes.data) state.settings = setRes.data;
@@ -326,7 +363,6 @@ function updatePartnerDropdown() {
   if (filtered.some(p => p.id === prevVal)) select.value = prevVal;
 }
 
-// Saat partner diganti pada transaksi OUT, otomatis sesuaikan harga khusus di semua baris keranjang
 document.getElementById('tx-partner').addEventListener('change', () => {
   refreshCartAutoPrices();
 });
@@ -348,12 +384,11 @@ function autoFillRowPrice(rowId) {
 
   const partnerId = document.getElementById('tx-partner').value || null;
   const qty = Number(row.querySelector('.cart-qty').value) || 0;
-  const [factor] = row.querySelector('.cart-unit').value.split('|');
-  const baseQty = qty * (Number(factor) || 1);
+  const [factor, inputUnit] = row.querySelector('.cart-unit').value.split('|');
 
-  const { price } = getEffectiveSellPrice(itemId, partnerId);
-  if (price > 0) {
-    row.querySelector('.cart-subtotal').value = Math.round(price * baseQty);
+  const autoSub = calculateAutoSellSubtotal(itemId, partnerId, qty, inputUnit, factor);
+  if (autoSub > 0) {
+    row.querySelector('.cart-subtotal').value = Math.round(autoSub);
     recalcGrandTotal();
   }
 }
@@ -423,7 +458,8 @@ function onCartItemChange(rowId) {
 
   let opts = `<option value="1|${escapeHtml(item.base_unit)}">${escapeHtml(item.base_unit)} (x1)</option>`;
   (item.item_units || []).forEach(u => {
-    opts += `<option value="${u.conversion_factor}|${escapeHtml(u.unit_name)}">${escapeHtml(u.unit_name)} (x${u.conversion_factor})</option>`;
+    const priceTag = Number(u.sell_price) > 0 ? ` — ${formatRupiah(u.sell_price)}` : '';
+    opts += `<option value="${u.conversion_factor}|${escapeHtml(u.unit_name)}">${escapeHtml(u.unit_name)} (x${u.conversion_factor}${priceTag})</option>`;
   });
   unitSelect.innerHTML = opts;
   recalcRow(rowId);
@@ -533,7 +569,6 @@ async function saveTransaction() {
     const baseQty = inputQty * factor;
     const unitPrice = baseQty !== 0 ? subtotal / Math.abs(baseQty) : 0;
     const itemObj = state.items.find(i => i.id === itemId);
-    // Kunci HPP saat transaksi OUT agar laporan laba historis tetap akurat
     const lockedCost = type === 'OUT' ? (Number(itemObj?.avg_cost) || 0) : unitPrice;
 
     itemsPayload.push({
@@ -707,7 +742,10 @@ function renderItemsTable() {
 
   tbody.innerHTML = filtered.map(i => {
     const isLow = Number(i.current_stock) <= Number(i.min_stock);
-    const unitsText = (i.item_units || []).map(u => `1 ${escapeHtml(u.unit_name)} = ${u.conversion_factor} ${escapeHtml(i.base_unit)}`).join(', ') || '-';
+    const unitsText = (i.item_units || []).map(u => {
+      const pTag = Number(u.sell_price) > 0 ? ` (${formatRupiah(u.sell_price)})` : '';
+      return `1 ${escapeHtml(u.unit_name)} = ${u.conversion_factor} ${escapeHtml(i.base_unit)}${pTag}`;
+    }).join('<br>') || '-';
     const cost = Number(i.avg_cost) || 0;
     const sell = Number(i.default_sell_price) || 0;
     const isLoss = sell > 0 && cost > 0 && sell < cost;
@@ -788,7 +826,7 @@ function openItemModal(itemId = null) {
     document.getElementById('item-avg-cost').value = Math.round(Number(item.avg_cost) || 0);
     document.getElementById('item-sell-price').value = Math.round(Number(item.default_sell_price) || 0);
     onSellPriceInput();
-    (item.item_units || []).forEach(u => addUnitRow(u.unit_name, u.conversion_factor));
+    (item.item_units || []).forEach(u => addUnitRow(u.unit_name, u.conversion_factor, u.sell_price));
   } else {
     document.getElementById('modal-item-title').textContent = 'Tambah Barang Baru';
   }
@@ -800,15 +838,16 @@ function closeItemModal() {
   document.getElementById('modal-item').classList.add('hidden');
 }
 
-function addUnitRow(unitName = '', factor = '') {
+function addUnitRow(unitName = '', factor = '', sellPrice = '') {
   const container = document.getElementById('item-units-container');
   const div = document.createElement('div');
-  div.className = 'unit-row flex gap-2 items-center';
+  div.className = 'unit-row grid grid-cols-12 gap-1.5 items-center';
+  const priceVal = Number(sellPrice) > 0 ? Math.round(Number(sellPrice)) : '';
   div.innerHTML = `
-    <input type="text" placeholder="Nama (BOX/PAK)" value="${escapeHtml(unitName)}" class="unit-name swiss-input text-xs font-mono uppercase flex-1" required />
-    <span class="font-mono text-xs">=</span>
-    <input type="number" min="2" step="any" placeholder="Isi (5/12)" value="${factor}" class="unit-factor swiss-input text-xs font-mono w-24" required />
-    <button type="button" onclick="this.parentElement.remove()" class="border border-swiss-ink px-2 py-1.5 text-xs font-mono">✕</button>
+    <input type="text" placeholder="BOX/PAK" value="${escapeHtml(unitName)}" class="unit-name swiss-input text-xs font-mono uppercase col-span-4" required />
+    <input type="number" min="2" step="any" placeholder="Isi (5/12)" value="${factor}" class="unit-factor swiss-input text-xs font-mono col-span-3" required />
+    <input type="number" min="0" step="any" placeholder="Harga Jual (Ops)" value="${priceVal}" class="unit-sell-price swiss-input text-xs font-mono col-span-4" title="Kosongkan jika ikut harga eceran x isi" />
+    <button type="button" onclick="this.parentElement.remove()" class="border border-swiss-ink py-2 text-xs font-mono col-span-1 text-center hover:bg-swiss-red hover:text-white">✕</button>
   `;
   container.appendChild(div);
 }
@@ -843,7 +882,8 @@ document.getElementById('form-item').addEventListener('submit', async (e) => {
     const unitsPayload = unitRows.map(r => ({
       item_id: savedId,
       unit_name: r.querySelector('.unit-name').value.trim().toUpperCase(),
-      conversion_factor: Number(r.querySelector('.unit-factor').value)
+      conversion_factor: Number(r.querySelector('.unit-factor').value),
+      sell_price: Number(r.querySelector('.unit-sell-price')?.value) || 0
     })).filter(u => u.unit_name && u.conversion_factor > 0);
 
     if (unitsPayload.length > 0) {
@@ -852,7 +892,7 @@ document.getElementById('form-item').addEventListener('submit', async (e) => {
     }
 
     closeItemModal();
-    showToast('Data barang & harga berhasil disimpan.');
+    showToast('Data barang & harga satuan berhasil disimpan.');
     await loadAllData();
   } catch (err) {
     showToast('Gagal menyimpan barang: ' + err.message, 'error');
@@ -1684,7 +1724,7 @@ function exportPriceAnalysisCSV() {
 }
 
 // ==========================================
-// 10. MANAJEMEN HARGA KHUSUS & ANALISA LABA
+// 10. MANAJEMEN HARGA KHUSUS PER SATUAN & ANALISA LABA
 // ==========================================
 let profitState = {
   byItem: [],
@@ -1720,13 +1760,30 @@ function loadPricingAndProfit() {
 
 function onPartnerPriceItemChange() {
   const itemId = document.getElementById('pp-item').value;
+  const unitSelect = document.getElementById('pp-unit');
   const infoEl = document.getElementById('pp-info-base');
   const item = state.items.find(i => i.id === itemId);
+
   if (!item) {
+    if (unitSelect) unitSelect.innerHTML = '<option value="">-- Pilih --</option>';
     infoEl.classList.add('hidden');
     return;
   }
-  infoEl.textContent = `Info barang terpilih — HPP (Modal): ${formatRupiah(item.avg_cost)} / ${item.base_unit} | Harga Jual Standar: ${formatRupiah(item.default_sell_price)} / ${item.base_unit}`;
+
+  if (unitSelect) {
+    let opts = `<option value="${escapeHtml(item.base_unit)}">${escapeHtml(item.base_unit)} (x1)</option>`;
+    (item.item_units || []).forEach(u => {
+      opts += `<option value="${escapeHtml(u.unit_name)}">${escapeHtml(u.unit_name)} (x${u.conversion_factor})</option>`;
+    });
+    unitSelect.innerHTML = opts;
+  }
+
+  const bigUnitInfo = (item.item_units || []).map(u => {
+    const p = Number(u.sell_price) > 0 ? formatRupiah(u.sell_price) : formatRupiah((Number(item.default_sell_price) || 0) * u.conversion_factor);
+    return `1 ${u.unit_name} (${u.conversion_factor} ${item.base_unit}): ${p}`;
+  }).join(' | ');
+
+  infoEl.textContent = `HPP: ${formatRupiah(item.avg_cost)}/${item.base_unit} | Standar: ${formatRupiah(item.default_sell_price)}/${item.base_unit}${bigUnitInfo ? ' | ' + bigUnitInfo : ''}`;
   infoEl.classList.remove('hidden');
 }
 
@@ -1734,20 +1791,24 @@ document.getElementById('form-partner-price')?.addEventListener('submit', async 
   e.preventDefault();
   const partner_id = document.getElementById('pp-partner').value;
   const item_id = document.getElementById('pp-item').value;
+  const unit_name = document.getElementById('pp-unit')?.value;
   const custom_price = Number(document.getElementById('pp-custom-price').value);
   const notes = document.getElementById('pp-notes').value.trim();
 
-  if (!partner_id || !item_id || isNaN(custom_price) || custom_price < 0) {
-    return showToast('Lengkapi Customer, Barang, dan Harga Khusus.', 'error');
+  if (!partner_id || !item_id || !unit_name || isNaN(custom_price) || custom_price < 0) {
+    return showToast('Lengkapi Customer, Barang, Satuan, dan Harga Khusus.', 'error');
   }
 
   const { error } = await db
     .from('partner_prices')
-    .upsert([{ partner_id, item_id, custom_price, notes, updated_at: new Date().toISOString() }], { onConflict: 'partner_id,item_id' });
+    .upsert([{ partner_id, item_id, unit_name, custom_price, notes, updated_at: new Date().toISOString() }], { onConflict: 'partner_id,item_id,unit_name' });
 
   if (error) return showToast('Gagal menyimpan harga khusus: ' + error.message, 'error');
 
   e.target.reset();
+  if (document.getElementById('pp-unit')) {
+    document.getElementById('pp-unit').innerHTML = '<option value="">-- Pilih --</option>';
+  }
   document.getElementById('pp-info-base').classList.add('hidden');
   showToast('Harga khusus partner berhasil disimpan.');
   await loadAllData();
@@ -1766,12 +1827,19 @@ function renderPartnerPricesTable() {
   }
 
   tbody.innerHTML = filtered.map(pp => {
-    const cost = Number(pp.items?.avg_cost) || 0;
-    const std = Number(pp.items?.default_sell_price) || 0;
+    const item = pp.items || {};
+    const unitName = pp.unit_name || item.base_unit || 'PCS';
+    const matchedUnit = (item.item_units || []).find(u => String(u.unit_name).toUpperCase() === String(unitName).toUpperCase());
+    const factor = matchedUnit ? Number(matchedUnit.conversion_factor) : 1;
+
+    const unitCost = (Number(item.avg_cost) || 0) * factor;
+    const unitStd = (matchedUnit && Number(matchedUnit.sell_price) > 0)
+      ? Number(matchedUnit.sell_price)
+      : ((Number(item.default_sell_price) || 0) * factor);
     const custom = Number(pp.custom_price) || 0;
-    const profit = custom - cost;
-    const margin = custom > 0 && cost > 0 ? ((profit / custom) * 100).toFixed(1) : null;
-    const isLoss = cost > 0 && custom < cost;
+    const profit = custom - unitCost;
+    const margin = custom > 0 && unitCost > 0 ? ((profit / custom) * 100).toFixed(1) : null;
+    const isLoss = unitCost > 0 && custom < unitCost;
 
     return `
       <tr class="hover:bg-neutral-50">
@@ -1780,11 +1848,11 @@ function renderPartnerPricesTable() {
           <div class="font-mono text-[10px] text-swiss-muted">${escapeHtml(pp.notes || pp.partners?.type || '')}</div>
         </td>
         <td class="p-2.5">
-          <div class="font-semibold">${escapeHtml(pp.items?.name || '-')}</div>
-          <div class="font-mono text-[10px] text-swiss-muted">${escapeHtml(pp.items?.sku || '')} / ${escapeHtml(pp.items?.base_unit || '')}</div>
+          <div class="font-semibold">${escapeHtml(item.name || '-')}</div>
+          <div class="font-mono text-[10px] text-swiss-muted">${escapeHtml(item.sku || '')} • per <strong class="text-swiss-ink">${escapeHtml(unitName)}</strong>${factor > 1 ? ` (x${factor})` : ''}</div>
         </td>
-        <td class="p-2.5 text-right font-mono text-swiss-muted">${formatRupiah(cost)}</td>
-        <td class="p-2.5 text-right font-mono text-swiss-muted">${std > 0 ? formatRupiah(std) : '-'}</td>
+        <td class="p-2.5 text-right font-mono text-swiss-muted">${formatRupiah(unitCost)}</td>
+        <td class="p-2.5 text-right font-mono text-swiss-muted">${unitStd > 0 ? formatRupiah(unitStd) : '-'}</td>
         <td class="p-2.5 text-right font-mono font-bold ${isLoss ? 'text-swiss-red' : ''}">${formatRupiah(custom)}</td>
         <td class="p-2.5 text-right font-mono ${isLoss ? 'text-swiss-red font-bold' : ''}">
           ${margin !== null ? `${margin}%` : '-'}
