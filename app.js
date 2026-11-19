@@ -9,7 +9,8 @@ let state = {
   categories: [],
   partners: [],
   items: [],
-  transactions: []
+  transactions: [],
+  partnerPrices: []
 };
 
 // ==========================================
@@ -74,6 +75,16 @@ function formatStockBreakdown(item) {
 
 function formatStockPlain(item) {
   return formatStockBreakdown(item).replace(/<[^>]+>/g, '');
+}
+
+// Cari harga jual efektif per satuan terkecil (prioritas: Harga Khusus Partner -> Harga Jual Standar)
+function getEffectiveSellPrice(itemId, partnerId) {
+  if (partnerId) {
+    const custom = state.partnerPrices.find(pp => pp.partner_id === partnerId && pp.item_id === itemId);
+    if (custom) return { price: Number(custom.custom_price) || 0, isCustom: true };
+  }
+  const item = state.items.find(i => i.id === itemId);
+  return { price: Number(item?.default_sell_price) || 0, isCustom: false };
 }
 
 // ==========================================
@@ -169,12 +180,13 @@ function switchTab(tabName) {
 // ==========================================
 async function loadAllData() {
   try {
-    const [setRes, catRes, partRes, itemRes, txRes] = await Promise.all([
+    const [setRes, catRes, partRes, itemRes, txRes, ppRes] = await Promise.all([
       db.from('app_settings').select('*').eq('id', 1).single(),
       db.from('categories').select('*').order('name'),
       db.from('partners').select('*').order('name'),
       db.from('items').select('*, categories(name), item_units(*)').order('name'),
-      db.from('transactions').select('*, partners(name, type)').order('transaction_date', { ascending: false }).order('created_at', { ascending: false }).limit(200)
+      db.from('transactions').select('*, partners(name, type)').order('transaction_date', { ascending: false }).order('created_at', { ascending: false }).limit(200),
+      db.from('partner_prices').select('*, partners(name, type), items(sku, name, base_unit, avg_cost, default_sell_price)').order('updated_at', { ascending: false })
     ]);
 
     if (setRes.data) state.settings = setRes.data;
@@ -182,6 +194,7 @@ async function loadAllData() {
     state.partners = partRes.data || [];
     state.items = itemRes.data || [];
     state.transactions = txRes.data || [];
+    state.partnerPrices = ppRes.data || [];
 
     applyWhiteLabel();
     renderDashboard();
@@ -226,6 +239,7 @@ function populateDropdowns() {
   if (prevRep) repItem.value = prevRep;
 
   updatePartnerDropdown();
+  populatePricingDropdowns();
 }
 
 // ==========================================
@@ -276,7 +290,7 @@ function renderTypeBadge(type) {
 }
 
 // ==========================================
-// 2. TRANSAKSI (MODE KERANJANG + FOTO NOTA)
+// 2. TRANSAKSI (MODE KERANJANG + AUTO-FILL HARGA + FOTO NOTA)
 // ==========================================
 function generateRefNo(type) {
   const prefix = type === 'IN' ? 'IN' : type === 'OUT' ? 'OUT' : 'ADJ';
@@ -291,14 +305,16 @@ function onTxTypeChange() {
   document.getElementById('tx-ref').value = generateRefNo(type);
   const label = document.getElementById('tx-partner-label');
   if (type === 'IN') label.textContent = 'Supplier / Toko';
-  else if (type === 'OUT') label.textContent = 'Divisi / Penerima';
+  else if (type === 'OUT') label.textContent = 'Divisi / Customer';
   else label.textContent = 'Unit / Keterangan (Opsional)';
   updatePartnerDropdown();
+  refreshCartAutoPrices();
 }
 
 function updatePartnerDropdown() {
   const type = document.getElementById('tx-type').value;
   const select = document.getElementById('tx-partner');
+  const prevVal = select.value;
   const filtered = state.partners.filter(p => {
     if (type === 'IN') return p.type === 'SUPPLIER';
     if (type === 'OUT') return p.type === 'INTERNAL' || p.type === 'CUSTOMER';
@@ -307,6 +323,39 @@ function updatePartnerDropdown() {
 
   select.innerHTML = '<option value="">-- Pilih / Opsional --</option>' +
     filtered.map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${p.type})</option>`).join('');
+  if (filtered.some(p => p.id === prevVal)) select.value = prevVal;
+}
+
+// Saat partner diganti pada transaksi OUT, otomatis sesuaikan harga khusus di semua baris keranjang
+document.getElementById('tx-partner').addEventListener('change', () => {
+  refreshCartAutoPrices();
+});
+
+function refreshCartAutoPrices() {
+  document.querySelectorAll('.cart-row').forEach(row => {
+    autoFillRowPrice(row.id);
+  });
+}
+
+function autoFillRowPrice(rowId) {
+  const type = document.getElementById('tx-type').value;
+  if (type !== 'OUT') return;
+
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  const itemId = row.querySelector('.cart-item').value;
+  if (!itemId) return;
+
+  const partnerId = document.getElementById('tx-partner').value || null;
+  const qty = Number(row.querySelector('.cart-qty').value) || 0;
+  const [factor] = row.querySelector('.cart-unit').value.split('|');
+  const baseQty = qty * (Number(factor) || 1);
+
+  const { price } = getEffectiveSellPrice(itemId, partnerId);
+  if (price > 0) {
+    row.querySelector('.cart-subtotal').value = Math.round(price * baseQty);
+    recalcGrandTotal();
+  }
 }
 
 function resetCart() {
@@ -387,6 +436,7 @@ function recalcRow(rowId) {
   const baseQty = qty * (Number(factor) || 1);
   const preview = row.querySelector('.cart-base-preview');
   if (preview) preview.textContent = `= ${baseQty} base`;
+  autoFillRowPrice(rowId);
 }
 
 function recalcGrandTotal() {
@@ -482,6 +532,9 @@ async function saveTransaction() {
 
     const baseQty = inputQty * factor;
     const unitPrice = baseQty !== 0 ? subtotal / Math.abs(baseQty) : 0;
+    const itemObj = state.items.find(i => i.id === itemId);
+    // Kunci HPP saat transaksi OUT agar laporan laba historis tetap akurat
+    const lockedCost = type === 'OUT' ? (Number(itemObj?.avg_cost) || 0) : unitPrice;
 
     itemsPayload.push({
       transaction_type: type,
@@ -491,6 +544,7 @@ async function saveTransaction() {
       conversion_factor: factor,
       base_qty: baseQty,
       unit_price: unitPrice,
+      cost_price: lockedCost,
       subtotal
     });
   }
@@ -633,7 +687,7 @@ async function deleteTransaction(txId, refNo) {
 }
 
 // ==========================================
-// 3. MASTER BARANG & KONVERSI SATUAN
+// 3. MASTER BARANG, KONVERSI & KALKULATOR MARGIN
 // ==========================================
 function renderItemsTable() {
   const q = (document.getElementById('search-item').value || '').toLowerCase();
@@ -647,13 +701,18 @@ function renderItemsTable() {
 
   const tbody = document.getElementById('items-table-body');
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="p-6 text-center text-swiss-muted font-mono">Belum ada data barang.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-swiss-muted font-mono">Belum ada data barang.</td></tr>';
     return;
   }
 
   tbody.innerHTML = filtered.map(i => {
     const isLow = Number(i.current_stock) <= Number(i.min_stock);
     const unitsText = (i.item_units || []).map(u => `1 ${escapeHtml(u.unit_name)} = ${u.conversion_factor} ${escapeHtml(i.base_unit)}`).join(', ') || '-';
+    const cost = Number(i.avg_cost) || 0;
+    const sell = Number(i.default_sell_price) || 0;
+    const isLoss = sell > 0 && cost > 0 && sell < cost;
+    const marginPct = sell > 0 && cost > 0 ? (((sell - cost) / sell) * 100).toFixed(1) : null;
+
     return `
       <tr class="hover:bg-neutral-50">
         <td class="p-3 font-mono font-semibold">${escapeHtml(i.sku)}</td>
@@ -661,6 +720,14 @@ function renderItemsTable() {
         <td class="p-3">${escapeHtml(i.categories?.name || '-')}</td>
         <td class="p-3 font-mono font-bold ${isLow ? 'text-swiss-red' : ''}">${formatStockBreakdown(i)}</td>
         <td class="p-3 font-mono text-[11px] text-swiss-muted">${unitsText}</td>
+        <td class="p-3 font-mono text-[11px]">
+          <div class="text-swiss-muted">HPP: ${formatRupiah(cost)}</div>
+          <div class="font-bold ${isLoss ? 'text-swiss-red' : ''}">
+            Jual: ${sell > 0 ? formatRupiah(sell) : '-'}
+            ${marginPct !== null ? `<span class="text-[10px] font-normal">(${marginPct}%)</span>` : ''}
+          </div>
+          ${isLoss ? '<div class="text-[10px] text-swiss-red font-bold">⚠ JUAL &lt; HPP</div>' : ''}
+        </td>
         <td class="p-3 text-right space-x-2">
           <button onclick="openItemModal('${i.id}')" class="font-mono text-[11px] underline">Edit</button>
           <button onclick="deleteItem('${i.id}', '${escapeHtml(i.name)}')" class="font-mono text-[11px] text-swiss-red underline">Hapus</button>
@@ -670,10 +737,42 @@ function renderItemsTable() {
   }).join('');
 }
 
+function updatePriceWarning(cost, sell) {
+  const warn = document.getElementById('item-price-warning');
+  if (!warn) return;
+  warn.classList.toggle('hidden', !(sell > 0 && cost > 0 && sell < cost));
+}
+
+function onMarginInput() {
+  const cost = Number(document.getElementById('item-avg-cost').value) || 0;
+  const pctRaw = document.getElementById('item-margin-pct').value;
+  if (pctRaw !== '' && cost > 0) {
+    const pct = Number(pctRaw) || 0;
+    const sell = Math.round(cost * (1 + pct / 100));
+    document.getElementById('item-sell-price').value = sell;
+    updatePriceWarning(cost, sell);
+  } else {
+    updatePriceWarning(cost, Number(document.getElementById('item-sell-price').value) || 0);
+  }
+}
+
+function onSellPriceInput() {
+  const cost = Number(document.getElementById('item-avg-cost').value) || 0;
+  const sell = Number(document.getElementById('item-sell-price').value) || 0;
+  if (cost > 0 && sell > 0) {
+    const pct = (((sell - cost) / cost) * 100).toFixed(1);
+    document.getElementById('item-margin-pct').value = pct;
+  } else {
+    document.getElementById('item-margin-pct').value = '';
+  }
+  updatePriceWarning(cost, sell);
+}
+
 function openItemModal(itemId = null) {
   document.getElementById('form-item').reset();
   document.getElementById('item-id').value = '';
   document.getElementById('item-units-container').innerHTML = '';
+  document.getElementById('item-price-warning')?.classList.add('hidden');
 
   if (itemId) {
     const item = state.items.find(i => i.id === itemId);
@@ -686,6 +785,9 @@ function openItemModal(itemId = null) {
     document.getElementById('item-base-unit').value = item.base_unit;
     document.getElementById('item-min-stock').value = item.min_stock;
     document.getElementById('item-location').value = item.location || '';
+    document.getElementById('item-avg-cost').value = Math.round(Number(item.avg_cost) || 0);
+    document.getElementById('item-sell-price').value = Math.round(Number(item.default_sell_price) || 0);
+    onSellPriceInput();
     (item.item_units || []).forEach(u => addUnitRow(u.unit_name, u.conversion_factor));
   } else {
     document.getElementById('modal-item-title').textContent = 'Tambah Barang Baru';
@@ -720,7 +822,9 @@ document.getElementById('form-item').addEventListener('submit', async (e) => {
     name: document.getElementById('item-name').value.trim(),
     base_unit: document.getElementById('item-base-unit').value.trim().toUpperCase(),
     min_stock: Number(document.getElementById('item-min-stock').value) || 0,
-    location: document.getElementById('item-location').value.trim()
+    location: document.getElementById('item-location').value.trim(),
+    avg_cost: Number(document.getElementById('item-avg-cost').value) || 0,
+    default_sell_price: Number(document.getElementById('item-sell-price').value) || 0
   };
 
   try {
@@ -748,7 +852,7 @@ document.getElementById('form-item').addEventListener('submit', async (e) => {
     }
 
     closeItemModal();
-    showToast('Data barang berhasil disimpan.');
+    showToast('Data barang & harga berhasil disimpan.');
     await loadAllData();
   } catch (err) {
     showToast('Gagal menyimpan barang: ' + err.message, 'error');
@@ -837,9 +941,9 @@ function downloadCSV(filename, rows) {
 }
 
 function exportStockSummaryCSV() {
-  const header = ['SKU', 'Nama Barang', 'Kategori', 'Stok (Base)', 'Satuan Terkecil', 'Stok Pecahan', 'Stok Min', 'Lokasi'];
+  const header = ['SKU', 'Nama Barang', 'Kategori', 'Stok (Base)', 'Satuan Terkecil', 'Stok Pecahan', 'Stok Min', 'HPP (Rp)', 'Harga Jual (Rp)', 'Lokasi'];
   const rows = state.items.map(i => [
-    i.sku, i.name, i.categories?.name || '', i.current_stock, i.base_unit, formatStockPlain(i), i.min_stock, i.location || ''
+    i.sku, i.name, i.categories?.name || '', i.current_stock, i.base_unit, formatStockPlain(i), i.min_stock, Math.round(i.avg_cost || 0), Math.round(i.default_sell_price || 0), i.location || ''
   ]);
   downloadCSV(`Rekap_Stok_${new Date().toISOString().split('T')[0]}.csv`, [header, ...rows]);
 }
@@ -1577,6 +1681,273 @@ function exportPriceAnalysisCSV() {
     x.gapPct.toFixed(1) + '%'
   ]);
   downloadCSV(`Analisa_Harga_Supplier_${new Date().toISOString().split('T')[0]}.csv`, [header, ...rows]);
+}
+
+// ==========================================
+// 10. MANAJEMEN HARGA KHUSUS & ANALISA LABA
+// ==========================================
+let profitState = {
+  byItem: [],
+  byPartner: []
+};
+
+function populatePricingDropdowns() {
+  const outPartners = state.partners.filter(p => p.type === 'CUSTOMER' || p.type === 'INTERNAL');
+
+  const ppPartner = document.getElementById('pp-partner');
+  const filterPpPartner = document.getElementById('filter-pp-partner');
+  const ppItem = document.getElementById('pp-item');
+  if (!ppPartner || !filterPpPartner || !ppItem) return;
+
+  const prevFilter = filterPpPartner.value;
+
+  ppPartner.innerHTML = '<option value="">-- Pilih Customer / Divisi --</option>' +
+    outPartners.map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${p.type})</option>`).join('');
+
+  filterPpPartner.innerHTML = '<option value="">Semua Customer / Partner</option>' +
+    outPartners.map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${p.type})</option>`).join('');
+  filterPpPartner.value = prevFilter;
+
+  ppItem.innerHTML = '<option value="">-- Pilih Barang --</option>' +
+    state.items.map(i => `<option value="${i.id}">[${escapeHtml(i.sku)}] ${escapeHtml(i.name)} (${escapeHtml(i.base_unit)})</option>`).join('');
+}
+
+function loadPricingAndProfit() {
+  populatePricingDropdowns();
+  renderPartnerPricesTable();
+  loadProfitAnalysis();
+}
+
+function onPartnerPriceItemChange() {
+  const itemId = document.getElementById('pp-item').value;
+  const infoEl = document.getElementById('pp-info-base');
+  const item = state.items.find(i => i.id === itemId);
+  if (!item) {
+    infoEl.classList.add('hidden');
+    return;
+  }
+  infoEl.textContent = `Info barang terpilih — HPP (Modal): ${formatRupiah(item.avg_cost)} / ${item.base_unit} | Harga Jual Standar: ${formatRupiah(item.default_sell_price)} / ${item.base_unit}`;
+  infoEl.classList.remove('hidden');
+}
+
+document.getElementById('form-partner-price')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const partner_id = document.getElementById('pp-partner').value;
+  const item_id = document.getElementById('pp-item').value;
+  const custom_price = Number(document.getElementById('pp-custom-price').value);
+  const notes = document.getElementById('pp-notes').value.trim();
+
+  if (!partner_id || !item_id || isNaN(custom_price) || custom_price < 0) {
+    return showToast('Lengkapi Customer, Barang, dan Harga Khusus.', 'error');
+  }
+
+  const { error } = await db
+    .from('partner_prices')
+    .upsert([{ partner_id, item_id, custom_price, notes, updated_at: new Date().toISOString() }], { onConflict: 'partner_id,item_id' });
+
+  if (error) return showToast('Gagal menyimpan harga khusus: ' + error.message, 'error');
+
+  e.target.reset();
+  document.getElementById('pp-info-base').classList.add('hidden');
+  showToast('Harga khusus partner berhasil disimpan.');
+  await loadAllData();
+  renderPartnerPricesTable();
+});
+
+function renderPartnerPricesTable() {
+  const filterId = document.getElementById('filter-pp-partner')?.value || '';
+  const tbody = document.getElementById('partner-prices-body');
+  if (!tbody) return;
+
+  const filtered = state.partnerPrices.filter(pp => !filterId || pp.partner_id === filterId);
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="p-5 text-center font-mono text-swiss-muted">Belum ada harga khusus yang diatur.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(pp => {
+    const cost = Number(pp.items?.avg_cost) || 0;
+    const std = Number(pp.items?.default_sell_price) || 0;
+    const custom = Number(pp.custom_price) || 0;
+    const profit = custom - cost;
+    const margin = custom > 0 && cost > 0 ? ((profit / custom) * 100).toFixed(1) : null;
+    const isLoss = cost > 0 && custom < cost;
+
+    return `
+      <tr class="hover:bg-neutral-50">
+        <td class="p-2.5">
+          <div class="font-semibold">${escapeHtml(pp.partners?.name || '-')}</div>
+          <div class="font-mono text-[10px] text-swiss-muted">${escapeHtml(pp.notes || pp.partners?.type || '')}</div>
+        </td>
+        <td class="p-2.5">
+          <div class="font-semibold">${escapeHtml(pp.items?.name || '-')}</div>
+          <div class="font-mono text-[10px] text-swiss-muted">${escapeHtml(pp.items?.sku || '')} / ${escapeHtml(pp.items?.base_unit || '')}</div>
+        </td>
+        <td class="p-2.5 text-right font-mono text-swiss-muted">${formatRupiah(cost)}</td>
+        <td class="p-2.5 text-right font-mono text-swiss-muted">${std > 0 ? formatRupiah(std) : '-'}</td>
+        <td class="p-2.5 text-right font-mono font-bold ${isLoss ? 'text-swiss-red' : ''}">${formatRupiah(custom)}</td>
+        <td class="p-2.5 text-right font-mono ${isLoss ? 'text-swiss-red font-bold' : ''}">
+          ${margin !== null ? `${margin}%` : '-'}
+        </td>
+        <td class="p-2.5 text-right">
+          <button onclick="deletePartnerPrice('${pp.id}')" class="font-mono text-[11px] text-swiss-red underline">Hapus</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function deletePartnerPrice(id) {
+  if (!confirm('Hapus harga khusus ini? Transaksi berikutnya akan kembali ke harga standar.')) return;
+  const { error } = await db.from('partner_prices').delete().eq('id', id);
+  if (error) return showToast(error.message, 'error');
+  showToast('Harga khusus dihapus.');
+  await loadAllData();
+  renderPartnerPricesTable();
+}
+
+function onProfitModeChange() {
+  const mode = document.getElementById('profit-period-mode').value;
+  document.getElementById('profit-month').classList.toggle('hidden', mode === 'ALL');
+  loadProfitAnalysis();
+}
+
+async function loadProfitAnalysis() {
+  const monthInput = document.getElementById('profit-month');
+  if (!monthInput) return;
+  if (!monthInput.value) {
+    monthInput.value = new Date().toISOString().substring(0, 7);
+  }
+
+  const mode = document.getElementById('profit-period-mode').value;
+  const monthVal = monthInput.value;
+
+  document.getElementById('profit-by-item-body').innerHTML = '<tr><td colspan="4" class="p-4 text-center font-mono text-swiss-muted">Menghitung laba...</td></tr>';
+  document.getElementById('profit-by-partner-body').innerHTML = '<tr><td colspan="4" class="p-4 text-center font-mono text-swiss-muted">Menghitung laba...</td></tr>';
+
+  try {
+    let query = db
+      .from('transaction_items')
+      .select('*, items(sku, name, base_unit, avg_cost), transactions!inner(id, transaction_date, partner_id, partners(id, name))')
+      .eq('transaction_type', 'OUT')
+      .gt('subtotal', 0);
+
+    if (mode === 'MONTH' && monthVal) {
+      const [y, m] = monthVal.split('-');
+      const lastDay = new Date(Number(y), Number(m), 0).getDate();
+      query = query
+        .gte('transactions.transaction_date', `${monthVal}-01`)
+        .lte('transactions.transaction_date', `${monthVal}-${String(lastDay).padStart(2, '0')}`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    let totalRev = 0;
+    let totalCogs = 0;
+    const itemMap = new Map();
+    const partMap = new Map();
+
+    (data || []).forEach(r => {
+      const item = r.items;
+      const tx = r.transactions;
+      if (!item || !tx) return;
+
+      const qty = Math.abs(Number(r.base_qty) || 0);
+      const rev = Number(r.subtotal) || 0;
+      const unitCost = Number(r.cost_price) > 0 ? Number(r.cost_price) : (Number(item.avg_cost) || 0);
+      const cogs = qty * unitCost;
+      const gross = rev - cogs;
+
+      totalRev += rev;
+      totalCogs += cogs;
+
+      if (!itemMap.has(r.item_id)) {
+        itemMap.set(r.item_id, { sku: item.sku, name: item.name, base_unit: item.base_unit, qty: 0, rev: 0, cogs: 0, gross: 0 });
+      }
+      const it = itemMap.get(r.item_id);
+      it.qty += qty;
+      it.rev += rev;
+      it.cogs += cogs;
+      it.gross += gross;
+
+      const pKey = tx.partner_id || 'UMUM';
+      const pName = tx.partners?.name || 'Umum / Tanpa Partner';
+      if (!partMap.has(pKey)) {
+        partMap.set(pKey, { name: pName, rev: 0, cogs: 0, gross: 0 });
+      }
+      const pt = partMap.get(pKey);
+      pt.rev += rev;
+      pt.cogs += cogs;
+      pt.gross += gross;
+    });
+
+    const totalGross = totalRev - totalCogs;
+    const avgMargin = totalRev > 0 ? ((totalGross / totalRev) * 100) : 0;
+
+    document.getElementById('profit-kpi-rev').textContent = formatRupiah(totalRev);
+    document.getElementById('profit-kpi-cogs').textContent = formatRupiah(totalCogs);
+    document.getElementById('profit-kpi-gross').textContent = formatRupiah(totalGross);
+    document.getElementById('profit-kpi-margin').textContent = `${avgMargin.toFixed(1)}%`;
+
+    profitState.byItem = Array.from(itemMap.values()).sort((a, b) => b.gross - a.gross);
+    profitState.byPartner = Array.from(partMap.values()).sort((a, b) => b.gross - a.gross);
+
+    const itemBody = document.getElementById('profit-by-item-body');
+    if (profitState.byItem.length === 0) {
+      itemBody.innerHTML = '<tr><td colspan="4" class="p-5 text-center font-mono text-swiss-muted">Belum ada transaksi keluar bernilai jual di periode ini.</td></tr>';
+    } else {
+      itemBody.innerHTML = profitState.byItem.map(it => {
+        const m = it.rev > 0 ? ((it.gross / it.rev) * 100).toFixed(1) : '0.0';
+        return `
+          <tr>
+            <td class="p-3"><div class="font-semibold">${escapeHtml(it.name)}</div><div class="font-mono text-[10px] text-swiss-muted">${escapeHtml(it.sku)}</div></td>
+            <td class="p-3 text-right font-mono">${it.qty} ${escapeHtml(it.base_unit)}</td>
+            <td class="p-3 text-right font-mono">${formatRupiah(it.rev)}</td>
+            <td class="p-3 text-right font-mono">
+              <div class="font-bold ${it.gross < 0 ? 'text-swiss-red' : ''}">${formatRupiah(it.gross)}</div>
+              <div class="text-[10px] text-swiss-muted">${m}%</div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    const partBody = document.getElementById('profit-by-partner-body');
+    if (profitState.byPartner.length === 0) {
+      partBody.innerHTML = '<tr><td colspan="4" class="p-5 text-center font-mono text-swiss-muted">Belum ada data laba per customer di periode ini.</td></tr>';
+    } else {
+      partBody.innerHTML = profitState.byPartner.map(pt => {
+        const m = pt.rev > 0 ? ((pt.gross / pt.rev) * 100).toFixed(1) : '0.0';
+        return `
+          <tr>
+            <td class="p-3 font-semibold">${escapeHtml(pt.name)}</td>
+            <td class="p-3 text-right font-mono">${formatRupiah(pt.rev)}</td>
+            <td class="p-3 text-right font-mono text-swiss-muted">${formatRupiah(pt.cogs)}</td>
+            <td class="p-3 text-right font-mono">
+              <div class="font-bold ${pt.gross < 0 ? 'text-swiss-red' : ''}">${formatRupiah(pt.gross)}</div>
+              <div class="text-[10px] text-swiss-muted">${m}%</div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+  } catch (err) {
+    showToast('Gagal menghitung analisa laba: ' + err.message, 'error');
+  }
+}
+
+function exportProfitCSV() {
+  if (profitState.byItem.length === 0) return showToast('Tidak ada data laba untuk diekspor.', 'error');
+  const mode = document.getElementById('profit-period-mode').value;
+  const label = mode === 'MONTH' ? document.getElementById('profit-month').value : 'Semua_Periode';
+  const header = ['SKU', 'Nama Produk', 'Qty Keluar', 'Satuan Base', 'Total Omzet (Rp)', 'Total HPP (Rp)', 'Laba Kotor (Rp)', 'Margin (%)'];
+  const rows = profitState.byItem.map(it => [
+    it.sku, it.name, it.qty, it.base_unit,
+    Math.round(it.rev), Math.round(it.cogs), Math.round(it.gross),
+    (it.rev > 0 ? ((it.gross / it.rev) * 100).toFixed(1) : '0.0') + '%'
+  ]);
+  downloadCSV(`Analisa_Laba_Produk_${label}.csv`, [header, ...rows]);
 }
 
 // Mulai aplikasi
