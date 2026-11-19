@@ -304,6 +304,7 @@ function renderDashboard() {
         <td class="p-3 font-mono text-swiss-muted">${i.min_stock} ${escapeHtml(i.base_unit)}</td>
       </tr>
     `).join('');
+    renderDashboardChart();
   }
 
   const recentBody = document.getElementById('dash-recent-tx-body');
@@ -2622,5 +2623,205 @@ async function finalizeStockOpname() {
     btn.textContent = 'Sahkan & Sesuaikan Stok →';
   }
 }
+// ==========================================
+// 12. GRAFIK DASHBOARD, DARK MODE & EFEK KURSOR
+// ==========================================
+let dashChartInstance = null;
+let dashChartMode = '14D';
+
+function setChartMode(mode) {
+  dashChartMode = mode;
+  const b14 = document.getElementById('btn-chart-14d');
+  const b6m = document.getElementById('btn-chart-6m');
+  if (b14 && b6m) {
+    b14.className = mode === '14D'
+      ? 'border border-swiss-ink bg-swiss-ink text-white px-2.5 py-1 text-[11px] font-mono font-semibold'
+      : 'border border-swiss-ink bg-white px-2.5 py-1 text-[11px] font-mono font-semibold';
+    b6m.className = mode === '6M'
+      ? 'border border-swiss-ink bg-swiss-ink text-white px-2.5 py-1 text-[11px] font-mono font-semibold'
+      : 'border border-swiss-ink bg-white px-2.5 py-1 text-[11px] font-mono font-semibold';
+  }
+  renderDashboardChart();
+}
+
+function renderDashboardChart() {
+  const canvas = document.getElementById('dash-trend-chart');
+  if (!canvas || typeof Chart === 'undefined') return;
+
+  const isDark = document.documentElement.classList.contains('dark');
+  const labels = [];
+  const keys = [];
+  const now = new Date();
+
+  if (dashChartMode === '6M') {
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      keys.push(ym);
+      labels.push(`${monthNames[d.getMonth()]} ${String(d.getFullYear()).slice(-2)}`);
+    }
+    const sub = document.getElementById('dash-chart-subtitle');
+    if (sub) sub.textContent = 'Jumlah transaksi 6 bulan terakhir';
+  } else {
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      const iso = d.toISOString().split('T')[0];
+      keys.push(iso);
+      labels.push(`${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`);
+    }
+    const sub = document.getElementById('dash-chart-subtitle');
+    if (sub) sub.textContent = 'Jumlah transaksi 14 hari terakhir';
+  }
+
+  const inCounts = keys.map(() => 0);
+  const outCounts = keys.map(() => 0);
+
+  (state.transactions || []).forEach(tx => {
+    const dt = tx.transaction_date || '';
+    const key = dashChartMode === '6M' ? dt.substring(0, 7) : dt.substring(0, 10);
+    const idx = keys.indexOf(key);
+    if (idx === -1) return;
+    if (tx.type === 'IN') inCounts[idx]++;
+    if (tx.type === 'OUT') outCounts[idx]++;
+  });
+
+  if (dashChartInstance) {
+    dashChartInstance.destroy();
+  }
+
+  const textColor = isDark ? '#9B9B93' : '#6B6B66';
+  const gridColor = isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(20, 20, 19, 0.06)';
+  const greenColor = isDark ? '#10B981' : '#059669';
+  const orangeColor = isDark ? '#F97316' : '#EA580C';
+
+  dashChartInstance = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Barang Masuk (IN)',
+          data: inCounts,
+          backgroundColor: greenColor,
+          borderRadius: 5,
+          maxBarThickness: 22
+        },
+        {
+          label: 'Barang Keluar (OUT)',
+          data: outCounts,
+          backgroundColor: orangeColor,
+          borderRadius: 5,
+          maxBarThickness: 22
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'top',
+          align: 'end',
+          labels: {
+            color: textColor,
+            boxWidth: 10,
+            boxHeight: 10,
+            usePointStyle: true,
+            pointStyle: 'circle',
+            font: { family: "'JetBrains Mono', monospace", size: 11 }
+          }
+        },
+        tooltip: {
+          backgroundColor: isDark ? '#262622' : '#141413',
+          titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
+          bodyFont: { family: "'Plus Jakarta Sans', sans-serif", size: 12 },
+          padding: 10,
+          cornerRadius: 8
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: textColor, font: { family: "'JetBrains Mono', monospace", size: 10 } }
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: gridColor },
+          ticks: {
+            stepSize: 1,
+            precision: 0,
+            color: textColor,
+            font: { family: "'JetBrains Mono', monospace", size: 10 }
+          }
+        }
+      }
+    }
+  });
+}
+
+// Dark Mode
+function applyTheme(theme) {
+  const isDark = theme === 'dark';
+  document.documentElement.classList.toggle('dark', isDark);
+  const label = document.getElementById('theme-toggle-label');
+  if (label) label.textContent = isDark ? '☀ Light Mode' : '☾ Dark Mode';
+}
+
+function toggleDarkMode() {
+  const next = document.documentElement.classList.contains('dark') ? 'light' : 'dark';
+  localStorage.setItem('atk_theme', next);
+  applyTheme(next);
+  renderDashboardChart();
+}
+
+function initTheme() {
+  const saved = localStorage.getItem('atk_theme') || 'light';
+  applyTheme(saved);
+}
+
+// Efek Kursor Bergerak (Ambient Aura + Spotlight Kartu)
+function initCursorEffects() {
+  if (window.matchMedia('(pointer: coarse)').matches) return;
+
+  const aura = document.createElement('div');
+  aura.id = 'cursor-aura';
+  document.body.appendChild(aura);
+
+  let targetX = -500, targetY = -500;
+  let currentX = -500, currentY = -500;
+
+  document.addEventListener('mousemove', (e) => {
+    targetX = e.clientX;
+    targetY = e.clientY;
+
+    const card = e.target.closest('.grid > .bg-white.p-4, #dash-chart-card, #login-screen > div');
+    if (card) {
+      const rect = card.getBoundingClientRect();
+      card.style.setProperty('--mx', `${e.clientX - rect.left}px`);
+      card.style.setProperty('--my', `${e.clientY - rect.top}px`);
+    }
+  }, { passive: true });
+
+  document.addEventListener('mouseleave', () => {
+    aura.style.opacity = '0';
+  });
+  document.addEventListener('mouseenter', () => {
+    aura.style.opacity = '1';
+  });
+
+  function animateAura() {
+    currentX += (targetX - currentX) * 0.14;
+    currentY += (targetY - currentY) * 0.14;
+    aura.style.transform = `translate3d(${currentX - 170}px, ${currentY - 170}px, 0)`;
+    requestAnimationFrame(animateAura);
+  }
+  requestAnimationFrame(animateAura);
+}
+
+initTheme();
+initCursorEffects();
 // Mulai aplikasi
 checkSession();
