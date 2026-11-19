@@ -1385,12 +1385,22 @@ async function loadPriceAnalysis() {
   closePriceDetail();
 
   try {
-    const { data, error } = await db
+    const rangeVal = document.getElementById('filter-price-range')?.value || '30';
+    let query = db
       .from('transaction_items')
       .select('*, items(id, sku, name, base_unit), transactions!inner(reference_no, transaction_date, type, partner_id, partners(id, name))')
       .eq('transaction_type', 'IN')
       .gt('subtotal', 0)
       .gt('base_qty', 0);
+
+    if (rangeVal !== 'ALL') {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - Number(rangeVal));
+      const cutoffStr = cutoff.toISOString().split('T')[0];
+      query = query.gte('transactions.transaction_date', cutoffStr);
+    }
+
+    const { data, error } = await query;
 
     if (error) throw error;
 
@@ -1519,8 +1529,8 @@ function renderPriceAnalysisTable() {
         <div class="font-mono text-[10px] text-swiss-muted">${escapeHtml(x.sku)} • per ${escapeHtml(x.base_unit)}</div>
       </td>
       <td class="p-3">
-        <div class="font-mono font-bold">${formatRupiah(x.cheapest.latestPrice)}</div>
-        <div class="text-[11px] text-swiss-muted">${escapeHtml(x.cheapest.name)}</div>
+        ? `<div class="font-mono font-semibold text-swiss-red">${formatRupiah(x.mostExpensive.latestPrice)}</div><div class="text-[11px] text-swiss-muted">${escapeHtml(x.mostExpensive.name)} <span class="font-mono text-[10px]">(${x.mostExpensive.latestDate})</span></div>`
+        <div class="text-[11px] text-swiss-muted">${escapeHtml(x.cheapest.name)} <span class="font-mono text-[10px]">(${x.cheapest.latestDate})</span></div>
       </td>
       <td class="p-3">
         ${x.suppliers.length > 1
