@@ -1162,3 +1162,215 @@ async function executeBulkImport() {
     btn.textContent = 'Mulai Import ke Database';
   }
 }
+// ==========================================
+// 8. REKAP OTOMATIS PER DIVISI & SUPPLIER
+// ==========================================
+let recapState = {
+  rawItems: [],
+  suppliers: [],
+  divisions: [],
+  selectedDetail: null
+};
+
+function onRecapModeChange() {
+  const mode = document.getElementById('recap-period-mode').value;
+  const monthInput = document.getElementById('recap-month');
+  monthInput.classList.toggle('hidden', mode === 'ALL');
+  loadRecapData();
+}
+
+async function loadRecapData() {
+  const monthInput = document.getElementById('recap-month');
+  if (!monthInput.value) {
+    monthInput.value = new Date().toISOString().substring(0, 7);
+  }
+
+  const mode = document.getElementById('recap-period-mode').value;
+  const monthVal = monthInput.value;
+
+  document.getElementById('recap-supplier-body').innerHTML = '<tr><td colspan="3" class="p-4 text-center font-mono text-swiss-muted">Memuat data...</td></tr>';
+  document.getElementById('recap-division-body').innerHTML = '<tr><td colspan="3" class="p-4 text-center font-mono text-swiss-muted">Memuat data...</td></tr>';
+  closeRecapDetail();
+
+  try {
+    let query = db
+      .from('transaction_items')
+      .select('*, items(sku, name, base_unit, avg_cost), transactions!inner(id, reference_no, transaction_date, type, partner_id, partners(id, name, type))')
+      .in('transaction_type', ['IN', 'OUT']);
+
+    if (mode === 'MONTH' && monthVal) {
+      const [y, m] = monthVal.split('-');
+      const lastDay = new Date(Number(y), Number(m), 0).getDate();
+      query = query
+        .gte('transactions.transaction_date', `${monthVal}-01`)
+        .lte('transactions.transaction_date', `${monthVal}-${String(lastDay).padStart(2, '0')}`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    recapState.rawItems = data || [];
+    processAndRenderRecap();
+  } catch (err) {
+    showToast('Gagal memuat rekap: ' + err.message, 'error');
+  }
+}
+
+function processAndRenderRecap() {
+  const supMap = new Map();
+  const divMap = new Map();
+  const inTxSet = new Set();
+  const outTxSet = new Set();
+  let totalInVal = 0;
+  let totalOutVal = 0;
+
+  recapState.rawItems.forEach(row => {
+    const tx = row.transactions;
+    const item = row.items;
+    if (!tx || !item) return;
+
+    const partnerKey = tx.partner_id || 'NONE';
+    const partnerName = tx.partners?.name || (row.transaction_type === 'IN' ? 'Tanpa Supplier / Umum' : 'Tanpa Divisi / Umum');
+
+    // Nilai rupiah: gunakan subtotal jika diisi; jika 0 pada transaksi OUT, estimasi dari avg_cost
+    const rawSub = Number(row.subtotal) || 0;
+    const estVal = rawSub > 0 ? rawSub : (Math.abs(Number(row.base_qty) || 0) * (Number(item.avg_cost) || 0));
+
+    if (row.transaction_type === 'IN') {
+      inTxSet.add(tx.id);
+      totalInVal += rawSub;
+
+      if (!supMap.has(partnerKey)) {
+        supMap.set(partnerKey, { key: partnerKey, name: partnerName, txIds: new Set(), totalValue: 0, itemCount: 0, itemsMap: new Map() });
+      }
+      const entry = supMap.get(partnerKey);
+      entry.txIds.add(tx.id);
+      entry.totalValue += rawSub;
+      entry.itemCount += 1;
+
+      if (!entry.itemsMap.has(row.item_id)) {
+        entry.itemsMap.set(row.item_id, { sku: item.sku, name: item.name, base_unit: item.base_unit, freq: 0, totalBaseQty: 0, totalVal: 0 });
+      }
+      const itEntry = entry.itemsMap.get(row.item_id);
+      itEntry.freq += 1;
+      itEntry.totalBaseQty += Number(row.base_qty) || 0;
+      itEntry.totalVal += rawSub;
+    } else if (row.transaction_type === 'OUT') {
+      outTxSet.add(tx.id);
+      totalOutVal += estVal;
+
+      if (!divMap.has(partnerKey)) {
+        divMap.set(partnerKey, { key: partnerKey, name: partnerName, txIds: new Set(), totalValue: 0, itemCount: 0, itemsMap: new Map() });
+      }
+      const entry = divMap.get(partnerKey);
+      entry.txIds.add(tx.id);
+      entry.totalValue += estVal;
+      entry.itemCount += 1;
+
+      if (!entry.itemsMap.has(row.item_id)) {
+        entry.itemsMap.set(row.item_id, { sku: item.sku, name: item.name, base_unit: item.base_unit, freq: 0, totalBaseQty: 0, totalVal: 0 });
+      }
+      const itEntry = entry.itemsMap.get(row.item_id);
+      itEntry.freq += 1;
+      itEntry.totalBaseQty += Number(row.base_qty) || 0;
+      itEntry.totalVal += estVal;
+    }
+  });
+
+  recapState.suppliers = Array.from(supMap.values()).sort((a, b) => b.totalValue - a.totalValue);
+  recapState.divisions = Array.from(divMap.values()).sort((a, b) => b.totalValue - a.totalValue);
+
+  // Update KPI
+  document.getElementById('recap-kpi-in-val').textContent = formatRupiah(totalInVal);
+  document.getElementById('recap-kpi-in-tx').textContent = `${inTxSet.size} nota masuk`;
+  document.getElementById('recap-kpi-out-val').textContent = formatRupiah(totalOutVal);
+  document.getElementById('recap-kpi-out-tx').textContent = `${outTxSet.size} nota keluar`;
+
+  const topSup = recapState.suppliers[0];
+  document.getElementById('recap-kpi-top-sup').textContent = topSup ? topSup.name : '-';
+  document.getElementById('recap-kpi-top-sup-val').textContent = topSup ? formatRupiah(topSup.totalValue) : 'Rp 0';
+
+  const topDiv = recapState.divisions[0];
+  document.getElementById('recap-kpi-top-div').textContent = topDiv ? topDiv.name : '-';
+  document.getElementById('recap-kpi-top-div-val').textContent = topDiv ? formatRupiah(topDiv.totalValue) : 'Rp 0';
+
+  // Render Tabel Supplier
+  const supBody = document.getElementById('recap-supplier-body');
+  if (recapState.suppliers.length === 0) {
+    supBody.innerHTML = '<tr><td colspan="3" class="p-5 text-center font-mono text-swiss-muted">Belum ada transaksi masuk di periode ini.</td></tr>';
+  } else {
+    supBody.innerHTML = recapState.suppliers.map(s => `
+      <tr onclick="openRecapDetail('IN', '${s.key}')" class="hover:bg-neutral-100 cursor-pointer">
+        <td class="p-3 font-semibold">${escapeHtml(s.name)}</td>
+        <td class="p-3 text-center font-mono">${s.txIds.size}</td>
+        <td class="p-3 text-right font-mono font-bold">${formatRupiah(s.totalValue)}</td>
+      </tr>
+    `).join('');
+  }
+
+  // Render Tabel Divisi
+  const divBody = document.getElementById('recap-division-body');
+  if (recapState.divisions.length === 0) {
+    divBody.innerHTML = '<tr><td colspan="3" class="p-5 text-center font-mono text-swiss-muted">Belum ada transaksi keluar di periode ini.</td></tr>';
+  } else {
+    divBody.innerHTML = recapState.divisions.map(d => `
+      <tr onclick="openRecapDetail('OUT', '${d.key}')" class="hover:bg-neutral-100 cursor-pointer">
+        <td class="p-3 font-semibold">${escapeHtml(d.name)}</td>
+        <td class="p-3 text-center font-mono">${d.txIds.size}</td>
+        <td class="p-3 text-right font-mono font-bold text-swiss-red">${formatRupiah(d.totalValue)}</td>
+      </tr>
+    `).join('');
+  }
+}
+
+function openRecapDetail(type, partnerKey) {
+  const list = type === 'IN' ? recapState.suppliers : recapState.divisions;
+  const entry = list.find(x => x.key === partnerKey);
+  if (!entry) return;
+
+  const items = Array.from(entry.itemsMap.values()).sort((a, b) => b.totalVal - a.totalVal);
+  recapState.selectedDetail = { type, name: entry.name, items };
+
+  document.getElementById('recap-detail-type').textContent = type === 'IN' ? 'RINCIAN BELANJA SUPPLIER' : 'RINCIAN PEMAKAIAN DIVISI / UNIT';
+  document.getElementById('recap-detail-title').textContent = `${entry.name} (${entry.txIds.size} Nota)`;
+  document.getElementById('recap-detail-body').innerHTML = items.map(it => `
+    <tr>
+      <td class="p-2.5 font-mono font-semibold">${escapeHtml(it.sku)}</td>
+      <td class="p-2.5">${escapeHtml(it.name)}</td>
+      <td class="p-2.5 text-center font-mono">${it.freq}x</td>
+      <td class="p-2.5 text-right font-mono font-semibold">${it.totalBaseQty} ${escapeHtml(it.base_unit)}</td>
+      <td class="p-2.5 text-right font-mono font-bold">${formatRupiah(it.totalVal)}</td>
+    </tr>
+  `).join('');
+
+  const panel = document.getElementById('recap-detail-panel');
+  panel.classList.remove('hidden');
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function closeRecapDetail() {
+  recapState.selectedDetail = null;
+  document.getElementById('recap-detail-panel')?.classList.add('hidden');
+}
+
+function exportRecapCSV() {
+  const mode = document.getElementById('recap-period-mode').value;
+  const label = mode === 'MONTH' ? document.getElementById('recap-month').value : 'Semua_Periode';
+  const header = ['Kategori Rekap', 'Nama Partner / Divisi', 'Jumlah Nota', 'Total Nilai / Estimasi (Rp)'];
+  const rows = [
+    ...recapState.suppliers.map(s => ['SUPPLIER (MASUK)', s.name, s.txIds.size, Math.round(s.totalValue)]),
+    ...recapState.divisions.map(d => ['DIVISI (KELUAR)', d.name, d.txIds.size, Math.round(d.totalValue)])
+  ];
+  if (rows.length === 0) return showToast('Tidak ada data rekap untuk diekspor.', 'error');
+  downloadCSV(`Rekap_Divisi_Supplier_${label}.csv`, [header, ...rows]);
+}
+
+function exportRecapDetailCSV() {
+  const d = recapState.selectedDetail;
+  if (!d) return;
+  const header = ['Jenis', 'Partner / Divisi', 'SKU', 'Nama Barang', 'Frekuensi', 'Total Qty', 'Satuan Base', 'Total Nilai (Rp)'];
+  const rows = d.items.map(it => [
+    d.type === 'IN' ? 'MASUK' : 'KELUAR', d.name, it.sku, it.name, it.freq, it.totalBaseQty, it.base_unit, Math.round(it.totalVal)
+  ]);
+  downloadCSV(`Rincian_${d.name.replace(/[^a-zA-Z0-9]/g, '_')}.csv`, [header, ...rows]);
+}
