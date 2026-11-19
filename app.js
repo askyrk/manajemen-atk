@@ -2165,6 +2165,462 @@ function exportProfitCSV() {
   ]);
   downloadCSV(`Analisa_Laba_Produk_${label}.csv`, [header, ...rows]);
 }
+// ==========================================
+// 11. BLIND STOCK OPNAME & DRAFT REKONSILIASI
+// ==========================================
+const SO_STORAGE_KEY = 'atk_so_draft_v1';
 
+let soDraft = {
+  mode: 'BLIND', // 'BLIND' | 'RECONCILE'
+  date: '',
+  notes: '',
+  counts: {} // { [itemId]: { qty: string|number, note: string } }
+};
+
+function loadSODraftFromStorage() {
+  try {
+    const raw = localStorage.getItem(SO_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      soDraft = {
+        mode: parsed.mode === 'RECONCILE' ? 'RECONCILE' : 'BLIND',
+        date: parsed.date || new Date().toISOString().split('T')[0],
+        notes: parsed.notes || '',
+        counts: parsed.counts || {}
+      };
+    } else {
+      soDraft.date = new Date().toISOString().split('T')[0];
+    }
+  } catch (_) {
+    soDraft.date = new Date().toISOString().split('T')[0];
+  }
+}
+
+function persistSODraft() {
+  localStorage.setItem(SO_STORAGE_KEY, JSON.stringify(soDraft));
+}
+
+function saveSODraftMeta() {
+  soDraft.date = document.getElementById('so-date')?.value || new Date().toISOString().split('T')[0];
+  soDraft.notes = document.getElementById('so-notes')?.value || '';
+  persistSODraft();
+}
+
+function loadStockOpname() {
+  loadSODraftFromStorage();
+
+  const catSelect = document.getElementById('so-filter-cat');
+  if (catSelect) {
+    const prev = catSelect.value;
+    catSelect.innerHTML = '<option value="">Semua Kategori</option>' +
+      state.categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    catSelect.value = prev;
+  }
+
+  const dateEl = document.getElementById('so-date');
+  const notesEl = document.getElementById('so-notes');
+  if (dateEl) dateEl.value = soDraft.date || new Date().toISOString().split('T')[0];
+  if (notesEl) notesEl.value = soDraft.notes || '';
+
+  updateSOModeUI();
+  renderSOTable();
+}
+
+function setSOMode(mode) {
+  soDraft.mode = mode;
+  persistSODraft();
+  updateSOModeUI();
+  renderSOTable();
+}
+
+function updateSOModeUI() {
+  const isRec = soDraft.mode === 'RECONCILE';
+  const badge = document.getElementById('so-mode-badge');
+  const btnBlind = document.getElementById('btn-so-blind');
+  const btnRec = document.getElementById('btn-so-reconcile');
+  const summary = document.getElementById('so-reconcile-summary');
+  const onlyDiffWrap = document.getElementById('so-only-diff-wrap');
+
+  if (badge) {
+    badge.textContent = isRec ? 'DRAFT REKONSILIASI (PREVIEW)' : 'MODE BLIND COUNT';
+    badge.className = isRec
+      ? 'px-2 py-0.5 bg-swiss-red text-white font-mono text-[10px] uppercase'
+      : 'px-2 py-0.5 bg-swiss-ink text-white font-mono text-[10px] uppercase';
+  }
+
+  if (btnBlind && btnRec) {
+    btnBlind.className = isRec
+      ? 'border border-swiss-ink px-3 py-2 text-xs font-mono font-bold bg-white hover:bg-neutral-100'
+      : 'border border-swiss-ink px-3 py-2 text-xs font-mono font-bold bg-swiss-ink text-white';
+    btnRec.className = isRec
+      ? 'border border-swiss-red px-3 py-2 text-xs font-mono font-bold bg-swiss-red text-white'
+      : 'border border-swiss-ink px-3 py-2 text-xs font-mono font-bold bg-white hover:bg-neutral-100';
+  }
+
+  summary?.classList.toggle('hidden', !isRec);
+  onlyDiffWrap?.classList.toggle('hidden', !isRec);
+}
+
+function getSOFilteredItems() {
+  const q = (document.getElementById('so-search')?.value || '').toLowerCase();
+  const catId = document.getElementById('so-filter-cat')?.value || '';
+  const onlyCounted = document.getElementById('so-only-counted')?.checked || false;
+  const onlyDiff = (soDraft.mode === 'RECONCILE') && (document.getElementById('so-only-diff')?.checked || false);
+
+  return state.items.filter(item => {
+    const matchText = item.name.toLowerCase().includes(q)
+      || item.sku.toLowerCase().includes(q)
+      || (item.location || '').toLowerCase().includes(q);
+    const matchCat = !catId || item.category_id === catId;
+    if (!matchText || !matchCat) return false;
+
+    const entry = soDraft.counts[item.id];
+    const hasCount = entry && entry.qty !== '' && entry.qty !== null && entry.qty !== undefined;
+    if (onlyCounted && !hasCount) return false;
+
+    if (onlyDiff) {
+      if (!hasCount) return false;
+      const diff = Number(entry.qty) - Number(item.current_stock || 0);
+      if (diff === 0) return false;
+    }
+    return true;
+  });
+}
+
+function updateSOKPIs() {
+  let counted = 0, matched = 0, diffCount = 0, netVal = 0;
+
+  state.items.forEach(item => {
+    const entry = soDraft.counts[item.id];
+    if (entry && entry.qty !== '' && entry.qty !== null && entry.qty !== undefined) {
+      counted++;
+      const diff = Number(entry.qty) - Number(item.current_stock || 0);
+      if (diff === 0) {
+        matched++;
+      } else {
+        diffCount++;
+        netVal += diff * (Number(item.avg_cost) || 0);
+      }
+    }
+  });
+
+  const statusEl = document.getElementById('so-draft-status');
+  if (statusEl) {
+    statusEl.textContent = counted > 0
+      ? `Draft lokal tersimpan (${counted} barang dihitung) — belum mengubah stok sistem.`
+      : 'Draft lokal kosong — mulai ketik hasil fisik atau upload Excel SO.';
+  }
+
+  const elCounted = document.getElementById('so-kpi-counted');
+  if (elCounted) elCounted.textContent = counted;
+  const elMatch = document.getElementById('so-kpi-match');
+  if (elMatch) elMatch.textContent = matched;
+  const elDiff = document.getElementById('so-kpi-diff');
+  if (elDiff) elDiff.textContent = diffCount;
+  const elVal = document.getElementById('so-kpi-val');
+  if (elVal) {
+    elVal.textContent = (netVal > 0 ? '+' : netVal < 0 ? '-' : '') + formatRupiah(Math.abs(netVal));
+    elVal.className = `text-lg md:text-xl font-extrabold font-mono mt-1 truncate ${netVal < 0 ? 'text-swiss-red' : ''}`;
+  }
+}
+
+function renderSOTable() {
+  const isRec = soDraft.mode === 'RECONCILE';
+  const thead = document.getElementById('so-table-head');
+  const tbody = document.getElementById('so-table-body');
+  if (!thead || !tbody) return;
+
+  updateSOKPIs();
+
+  if (isRec) {
+    thead.innerHTML = `
+      <tr>
+        <th class="p-3">Barang & Lokasi</th>
+        <th class="p-3 text-right">Stok Sistem</th>
+        <th class="p-3 w-36">Stok Fisik (Base)</th>
+        <th class="p-3 text-right">Selisih</th>
+        <th class="p-3 text-right">Nilai Selisih</th>
+        <th class="p-3">Catatan</th>
+      </tr>
+    `;
+  } else {
+    thead.innerHTML = `
+      <tr>
+        <th class="p-3">Barang</th>
+        <th class="p-3">Lokasi</th>
+        <th class="p-3">Satuan Base</th>
+        <th class="p-3 w-40">Hitungan Fisik</th>
+        <th class="p-3">Catatan Lapangan</th>
+      </tr>
+    `;
+  }
+
+  const items = getSOFilteredItems();
+  if (items.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="${isRec ? 6 : 5}" class="p-6 text-center font-mono text-swiss-muted">Tidak ada barang yang sesuai filter.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = items.map(item => {
+    const entry = soDraft.counts[item.id] || { qty: '', note: '' };
+    const hasCount = entry.qty !== '' && entry.qty !== null && entry.qty !== undefined;
+    const sysStock = Number(item.current_stock) || 0;
+    const diff = hasCount ? (Number(entry.qty) - sysStock) : null;
+    const diffVal = diff !== null ? diff * (Number(item.avg_cost) || 0) : 0;
+
+    if (!isRec) {
+      return `
+        <tr class="hover:bg-neutral-50 ${hasCount ? 'bg-neutral-50/70' : ''}">
+          <td class="p-3">
+            <div class="font-semibold">${escapeHtml(item.name)}</div>
+            <div class="font-mono text-[10px] text-swiss-muted">${escapeHtml(item.sku)}</div>
+          </td>
+          <td class="p-3 font-mono text-[11px] text-swiss-muted">${escapeHtml(item.location || '-')}</td>
+          <td class="p-3 font-mono font-semibold">${escapeHtml(item.base_unit)}</td>
+          <td class="p-2.5">
+            <input type="number" step="any" min="0" value="${hasCount ? entry.qty : ''}"
+              placeholder="Kosong..."
+              oninput="onSOInputChange('${item.id}', 'qty', this.value)"
+              class="swiss-input py-1.5 text-xs font-mono font-bold" />
+          </td>
+          <td class="p-2.5">
+            <input type="text" value="${escapeHtml(entry.note || '')}"
+              placeholder="Opsional (rusak/selip)"
+              oninput="onSOInputChange('${item.id}', 'note', this.value)"
+              class="swiss-input py-1.5 text-xs" />
+          </td>
+        </tr>
+      `;
+    }
+
+    const diffClass = diff === null ? 'text-swiss-muted' : diff === 0 ? 'text-swiss-muted' : 'text-swiss-red font-bold';
+    const diffLabel = diff === null ? '-' : diff > 0 ? `+${diff}` : `${diff}`;
+
+    return `
+      <tr class="hover:bg-neutral-50 ${diff && diff !== 0 ? 'bg-red-50/40' : ''}">
+        <td class="p-3">
+          <div class="font-semibold">${escapeHtml(item.name)}</div>
+          <div class="font-mono text-[10px] text-swiss-muted">${escapeHtml(item.sku)} • ${escapeHtml(item.location || 'Tanpa Lokasi')}</div>
+        </td>
+        <td class="p-3 text-right font-mono">${sysStock} ${escapeHtml(item.base_unit)}</td>
+        <td class="p-2.5">
+          <input type="number" step="any" min="0" value="${hasCount ? entry.qty : ''}"
+            placeholder="Belum dihitung"
+            onchange="onSOInputChange('${item.id}', 'qty', this.value, true)"
+            class="swiss-input py-1.5 text-xs font-mono font-bold" />
+        </td>
+        <td class="p-3 text-right font-mono ${diffClass}">${diffLabel} ${diff !== null ? escapeHtml(item.base_unit) : ''}</td>
+        <td class="p-3 text-right font-mono ${diffClass}">
+          ${diff !== null && diff !== 0 ? `${diffVal > 0 ? '+' : '-'}${formatRupiah(Math.abs(diffVal))}` : '-'}
+        </td>
+        <td class="p-2.5">
+          <input type="text" value="${escapeHtml(entry.note || '')}"
+            placeholder="Catatan recount..."
+            oninput="onSOInputChange('${item.id}', 'note', this.value)"
+            class="swiss-input py-1.5 text-xs" />
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function onSOInputChange(itemId, field, value, reRender = false) {
+  if (!soDraft.counts[itemId]) {
+    soDraft.counts[itemId] = { qty: '', note: '' };
+  }
+  soDraft.counts[itemId][field] = value;
+
+  if (soDraft.counts[itemId].qty === '' && !soDraft.counts[itemId].note) {
+    delete soDraft.counts[itemId];
+  }
+
+  persistSODraft();
+  updateSOKPIs();
+  if (reRender) renderSOTable();
+}
+
+function clearSODraft() {
+  if (!confirm('Hapus seluruh isi Draft Stock Opname lokal? Data stok di sistem tidak akan terpengaruh.')) return;
+  localStorage.removeItem(SO_STORAGE_KEY);
+  soDraft = {
+    mode: 'BLIND',
+    date: new Date().toISOString().split('T')[0],
+    notes: '',
+    counts: {}
+  };
+  document.getElementById('so-excel-upload').value = '';
+  loadStockOpname();
+  showToast('Draft Stock Opname berhasil dihapus.');
+}
+
+function downloadSOBlankSheet() {
+  const items = getSOFilteredItems();
+  if (items.length === 0) return showToast('Tidak ada barang untuk dicetak ke lembar SO.', 'error');
+
+  const rows = items.map(i => ({
+    SKU: i.sku,
+    NAMA_BARANG: i.name,
+    KATEGORI: i.categories?.name || '',
+    LOKASI: i.location || '',
+    SATUAN_BASE: i.base_unit,
+    STOK_FISIK: '',
+    CATATAN: ''
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Lembar_SO_Kosong');
+  XLSX.writeFile(wb, `Lembar_Blind_SO_${new Date().toISOString().split('T')[0]}.xlsx`);
+}
+
+function handleSOExcelUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rawRows = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
+
+      const skuToItem = new Map(state.items.map(i => [i.sku.toUpperCase(), i]));
+      let loadedCount = 0;
+
+      rawRows.forEach(raw => {
+        const r = normalizeRowKeys(raw);
+        const sku = String(r.SKU || '').trim().toUpperCase();
+        const item = skuToItem.get(sku);
+        if (!item) return;
+
+        const phys = parseOptionalNumber(r.STOK_FISIK ?? r.FISIK ?? r.QTY_FISIK);
+        if (phys === null) return;
+
+        soDraft.counts[item.id] = {
+          qty: phys,
+          note: String(r.CATATAN || r.KETERANGAN || '').trim()
+        };
+        loadedCount++;
+      });
+
+      if (loadedCount === 0) {
+        return showToast('Tidak ada angka STOK_FISIK yang cocok dengan SKU master.', 'error');
+      }
+
+      persistSODraft();
+      setSOMode('RECONCILE');
+      showToast(`${loadedCount} hasil hitung fisik berhasil dimuat ke Draft Rekonsiliasi.`);
+    } catch (err) {
+      showToast('Gagal membaca file SO: ' + err.message, 'error');
+    } finally {
+      event.target.value = '';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function exportSOReconcileCSV() {
+  const rows = [];
+  state.items.forEach(item => {
+    const entry = soDraft.counts[item.id];
+    if (!entry || entry.qty === '' || entry.qty === null || entry.qty === undefined) return;
+    const sys = Number(item.current_stock) || 0;
+    const phys = Number(entry.qty);
+    const diff = phys - sys;
+    const val = diff * (Number(item.avg_cost) || 0);
+    rows.push([
+      item.sku, item.name, item.location || '', item.base_unit,
+      sys, phys, diff, Math.round(val), entry.note || ''
+    ]);
+  });
+
+  if (rows.length === 0) return showToast('Belum ada barang yang dihitung di draft.', 'error');
+  const header = ['SKU', 'Nama Barang', 'Lokasi', 'Satuan Base', 'Stok Sistem', 'Stok Fisik', 'Selisih', 'Nilai Selisih (Rp)', 'Catatan'];
+  downloadCSV(`Draft_Rekonsiliasi_SO_${soDraft.date || new Date().toISOString().split('T')[0]}.csv`, [header, ...rows]);
+}
+
+async function finalizeStockOpname() {
+  const adjustments = [];
+  state.items.forEach(item => {
+    const entry = soDraft.counts[item.id];
+    if (!entry || entry.qty === '' || entry.qty === null || entry.qty === undefined) return;
+    const sys = Number(item.current_stock) || 0;
+    const phys = Number(entry.qty);
+    const diff = phys - sys;
+    if (diff !== 0) {
+      adjustments.push({
+        item,
+        diff,
+        cost: Number(item.avg_cost) || 0
+      });
+    }
+  });
+
+  if (adjustments.length === 0) {
+    return showToast('Tidak ada selisih stok untuk disahkan (semua barang yang dihitung sudah cocok).');
+  }
+
+  const ok = confirm(
+    `Sahkan hasil Stock Opname ini?\n\n` +
+    `• ${adjustments.length} barang yang berselisih akan disesuaikan otomatis di stok gudang.\n` +
+    `• Barang yang tidak dihitung / sudah cocok tidak akan diubah.\n` +
+    `• Tercatat sebagai 1 bukti transaksi ADJUSTMENT (bisa dihapus kembali dari menu 02 jika perlu).`
+  );
+  if (!ok) return;
+
+  const btn = document.getElementById('btn-so-finalize');
+  btn.disabled = true;
+  btn.textContent = 'Menyimpan SO...';
+
+  try {
+    const txDate = document.getElementById('so-date').value || new Date().toISOString().split('T')[0];
+    const notes = (document.getElementById('so-notes').value || '').trim() || 'Penyesuaian Hasil Stock Opname';
+    const refNo = generateRefNo('ADJUSTMENT').replace('ADJ-', 'SO-');
+
+    const { data: txData, error: txErr } = await db
+      .from('transactions')
+      .insert([{
+        reference_no: refNo,
+        transaction_date: txDate,
+        type: 'ADJUSTMENT',
+        partner_id: null,
+        notes,
+        created_by: state.user.id
+      }])
+      .select()
+      .single();
+
+    if (txErr) throw txErr;
+
+    const detailRows = adjustments.map(a => ({
+      transaction_id: txData.id,
+      transaction_type: 'ADJUSTMENT',
+      item_id: a.item.id,
+      input_qty: a.diff,
+      input_unit: a.item.base_unit,
+      conversion_factor: 1,
+      base_qty: a.diff,
+      unit_price: a.cost,
+      cost_price: a.cost,
+      subtotal: Math.round(Math.abs(a.diff) * a.cost)
+    }));
+
+    const { error: detErr } = await db.from('transaction_items').insert(detailRows);
+    if (detErr) throw detErr;
+
+    localStorage.removeItem(SO_STORAGE_KEY);
+    soDraft = { mode: 'BLIND', date: new Date().toISOString().split('T')[0], notes: '', counts: {} };
+
+    showToast(`Stock Opname ${refNo} disahkan! (${adjustments.length} barang disesuaikan)`);
+    await loadAllData();
+    loadStockOpname();
+  } catch (err) {
+    showToast('Gagal mengesahkan SO: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sahkan & Sesuaikan Stok →';
+  }
+}
 // Mulai aplikasi
 checkSession();
