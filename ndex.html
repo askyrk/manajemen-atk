@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sistem Inventaris ATK</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'Helvetica Neue', 'Arial', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            swiss: {
+              red: '#E11D48',
+              ink: '#111111',
+              muted: '#666666',
+              line: '#E5E5E5',
+              bg: '#FAFAFA',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Inter', sans-serif; color: #111111; background-color: #FFFFFF; }
+    .swiss-border { border: 1px solid #111111; }
+    .swiss-input {
+      width: 100%; border: 1px solid #D4D4D4; padding: 0.55rem 0.75rem;
+      font-size: 0.875rem; background: #FFFFFF; outline: none; transition: border-color 0.15s;
+    }
+    .swiss-input:focus { border-color: #111111; }
+    .nav-btn.active { background-color: #111111; color: #FFFFFF; }
+    @media print {
+      .no-print { display: none !important; }
+      body { background: #FFFFFF; }
+    }
+  </style>
+</head>
+<body class="antialiased selection:bg-swiss-red selection:text-white">
+
+  <!-- TOAST NOTIFICATION -->
+  <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm no-print"></div>
+
+  <!-- ================= LOGIN SCREEN ================= -->
+  <div id="login-screen" class="min-h-screen flex items-center justify-center bg-swiss-bg p-4">
+    <div class="w-full max-w-md bg-white border-2 border-swiss-ink p-8">
+      <div class="flex items-center gap-2 mb-6">
+        <span class="inline-block w-3.5 h-3.5 bg-swiss-red"></span>
+        <span class="font-mono text-xs uppercase tracking-widest text-swiss-muted">Inventory System</span>
+      </div>
+      <h1 id="login-company-name" class="text-3xl font-extrabold tracking-tight uppercase leading-none mb-2">
+        SISTEM INVENTARIS ATK
+      </h1>
+      <p class="text-sm text-swiss-muted mb-8">Masuk menggunakan akun operasional Anda.</p>
+
+      <form id="login-form" class="space-y-4">
+        <div>
+          <label class="block font-mono text-xs uppercase tracking-wider mb-1.5">Email</label>
+          <input type="email" id="login-email" required class="swiss-input" placeholder="admin@email.com" />
+        </div>
+        <div>
+          <label class="block font-mono text-xs uppercase tracking-wider mb-1.5">Password</label>
+          <input type="password" id="login-password" required class="swiss-input" placeholder="••••••••" />
+        </div>
+        <button type="submit" id="login-btn"
+          class="w-full bg-swiss-ink text-white font-semibold uppercase tracking-wider text-xs py-3.5 hover:bg-swiss-red transition-colors">
+          Masuk ke Sistem →
+        </button>
+      </form>
+      <p id="login-error" class="mt-4 text-xs text-swiss-red font-mono hidden"></p>
+    </div>
+  </div>
+
+  <!-- ================= MAIN APP ================= -->
+  <div id="app-screen" class="hidden min-h-screen flex flex-col md:flex-row">
+
+    <!-- MOBILE TOPBAR -->
+    <header class="md:hidden flex items-center justify-between border-b-2 border-swiss-ink px-4 py-3 bg-white sticky top-0 z-30 no-print">
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="w-3 h-3 bg-swiss-red shrink-0"></span>
+        <span class="brand-name font-extrabold text-sm uppercase tracking-tight truncate">INVENTARIS ATK</span>
+      </div>
+      <button id="mobile-menu-toggle" class="border border-swiss-ink px-3 py-1.5 font-mono text-xs uppercase font-semibold">
+        Menu
+      </button>
+    </header>
+
+    <!-- SIDEBAR -->
+    <aside id="sidebar" class="hidden md:flex flex-col w-full md:w-64 border-b-2 md:border-b-0 md:border-r-2 border-swiss-ink bg-white shrink-0 justify-between no-print">
+      <div>
+        <div class="hidden md:block p-6 border-b border-swiss-line">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="w-3 h-3 bg-swiss-red"></span>
+            <span class="font-mono text-[11px] uppercase tracking-widest text-swiss-muted">White-Label ERP</span>
+          </div>
+          <h1 class="brand-name text-lg font-extrabold uppercase tracking-tight leading-tight">SISTEM INVENTARIS ATK</h1>
+          <p class="brand-subtitle text-xs text-swiss-muted mt-1">Manajemen Stok & Operasional</p>
+        </div>
+
+        <nav class="p-3 space-y-1">
+          <button onclick="switchTab('dashboard')" data-tab="dashboard" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
+            <span>01 / Dashboard</span>
+          </button>
+          <button onclick="switchTab('transactions')" data-tab="transactions" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
+            <span>02 / Transaksi & Nota</span>
+          </button>
+          <button onclick="switchTab('items')" data-tab="items" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
+            <span>03 / Master Barang</span>
+          </button>
+          <button onclick="switchTab('reports')" data-tab="reports" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
+            <span>04 / Kartu Stok & Arsip</span>
+          </button>
+          <button onclick="switchTab('master')" data-tab="master" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
+            <span>05 / Kategori & Partner</span>
+          </button>
+          <button onclick="switchTab('settings')" data-tab="settings" class="nav-btn w-full text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider flex items-center justify-between hover:bg-neutral-100">
+            <span>06 / Pengaturan</span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="p-4 border-t border-swiss-line">
+        <p id="user-email-display" class="font-mono text-[11px] text-swiss-muted truncate mb-2"></p>
+        <button onclick="logout()" class="w-full border border-swiss-ink py-2 text-xs font-semibold uppercase tracking-wider hover:bg-swiss-red hover:text-white hover:border-swiss-red transition-colors">
+          Keluar
+        </button>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="flex-1 bg-swiss-bg p-4 md:p-8 overflow-x-hidden">
+
+      <!-- ============ TAB 1: DASHBOARD ============ -->
+      <section id="tab-dashboard" class="tab-section space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-end justify-between border-b-2 border-swiss-ink pb-4 gap-3">
+          <div>
+            <p class="font-mono text-xs uppercase tracking-widest text-swiss-muted">01 — Ringkasan Operasional</p>
+            <h2 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight">Dashboard Stok</h2>
+          </div>
+          <button onclick="switchTab('transactions')" class="bg-swiss-red text-white px-4 py-2.5 text-xs font-semibold uppercase tracking-wider hover:bg-swiss-ink transition-colors">
+            + Input Transaksi Baru
+          </button>
+        </div>
+
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="bg-white border border-swiss-ink p-4">
+            <p class="font-mono text-[11px] uppercase text-swiss-muted">Total Jenis Barang</p>
+            <p id="kpi-total-items" class="text-3xl font-extrabold font-mono mt-2">0</p>
+          </div>
+          <div class="bg-white border border-swiss-ink p-4">
+            <p class="font-mono text-[11px] uppercase text-swiss-red font-semibold">Stok Menipis</p>
+            <p id="kpi-low-stock" class="text-3xl font-extrabold font-mono text-swiss-red mt-2">0</p>
+          </div>
+          <div class="bg-white border border-swiss-ink p-4">
+            <p class="font-mono text-[11px] uppercase text-swiss-muted">Transaksi Bulan Ini</p>
+            <p id="kpi-month-tx" class="text-3xl font-extrabold font-mono mt-2">0</p>
+          </div>
+          <div class="bg-white border border-swiss-ink p-4">
+            <p class="font-mono text-[11px] uppercase text-swiss-muted">Estimasi Nilai Stok</p>
+            <p id="kpi-stock-value" class="text-xl md:text-2xl font-extrabold font-mono mt-2 truncate">Rp 0</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <!-- Low Stock Alert -->
+          <div class="bg-white border border-swiss-ink">
+            <div class="px-4 py-3 border-b border-swiss-ink flex items-center justify-between bg-neutral-50">
+              <h3 class="font-bold text-xs uppercase tracking-wider">Peringatan Stok Menipis</h3>
+              <span class="w-2.5 h-2.5 bg-swiss-red"></span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead class="border-b border-swiss-line font-mono uppercase text-[11px] text-swiss-muted">
+                  <tr>
+                    <th class="p-3">Barang</th>
+                    <th class="p-3">Sisa Stok</th>
+                    <th class="p-3">Min</th>
+                  </tr>
+                </thead>
+                <tbody id="dash-low-stock-body" class="divide-y divide-swiss-line"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Recent Transactions -->
+          <div class="bg-white border border-swiss-ink">
+            <div class="px-4 py-3 border-b border-swiss-ink flex items-center justify-between bg-neutral-50">
+              <h3 class="font-bold text-xs uppercase tracking-wider">Transaksi Terakhir</h3>
+              <button onclick="switchTab('transactions')" class="font-mono text-[11px] underline">Lihat Semua</button>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead class="border-b border-swiss-line font-mono uppercase text-[11px] text-swiss-muted">
+                  <tr>
+                    <th class="p-3">Tanggal & No</th>
+                    <th class="p-3">Jenis</th>
+                    <th class="p-3">Partner</th>
+                  </tr>
+                </thead>
+                <tbody id="dash-recent-tx-body" class="divide-y divide-swiss-line"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ TAB 2: TRANSAKSI ============ -->
+      <section id="tab-transactions" class="tab-section hidden space-y-6">
+        <div class="border-b-2 border-swiss-ink pb-4">
+          <p class="font-mono text-xs uppercase tracking-widest text-swiss-muted">02 — 1 Kali Entry, Banyak Output</p>
+          <h2 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight">Input Transaksi & Nota</h2>
+        </div>
+
+        <!-- Form Keranjang -->
+        <div class="bg-white border-2 border-swiss-ink p-4 md:p-6 space-y-5">
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label class="block font-mono text-[11px] uppercase mb-1">Jenis Transaksi</label>
+              <select id="tx-type" onchange="onTxTypeChange()" class="swiss-input font-semibold">
+                <option value="IN">STOK MASUK (BELI)</option>
+                <option value="OUT">STOK KELUAR (PAKAI / KIRIM)</option>
+                <option value="ADJUSTMENT">STOCK OPNAME (PENYESUAIAN)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block font-mono text-[11px] uppercase mb-1">Tanggal</label>
+              <input type="date" id="tx-date" class="swiss-input font-mono" />
+            </div>
+            <div>
+              <label class="block font-mono text-[11px] uppercase mb-1">No. Bukti (Otomatis)</label>
+              <input type="text" id="tx-ref" class="swiss-input font-mono" />
+            </div>
+            <div>
+              <label id="tx-partner-label" class="block font-mono text-[11px] uppercase mb-1">Supplier</label>
+              <select id="tx-partner" class="swiss-input"></select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block font-mono text-[11px] uppercase mb-1">Catatan / Keterangan</label>
+              <input type="text" id="tx-notes" class="swiss-input" placeholder="Opsional (misal: Belanja rutin bulanan)" />
+            </div>
+            <div>
+              <label class="block font-mono text-[11px] uppercase mb-1">Foto Nota (Opsional → Auto Google Drive)</label>
+              <input type="file" id="tx-receipt-file" accept="image/*" class="swiss-input text-xs file:mr-3 file:py-1 file:px-2 file:border file:border-swiss-ink file:bg-neutral-100 file:text-xs file:font-mono" />
+            </div>
+          </div>
+
+          <!-- Baris Barang -->
+          <div class="border-t border-swiss-line pt-4">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold text-xs uppercase tracking-wider">Daftar Barang dalam Nota</h3>
+              <button type="button" onclick="addCartRow()" class="border border-swiss-ink px-3 py-1.5 text-xs font-mono font-semibold hover:bg-swiss-ink hover:text-white">
+                + Tambah Baris Barang
+              </button>
+            </div>
+            <div id="cart-rows" class="space-y-2"></div>
+            <p class="text-[11px] text-swiss-muted font-mono mt-2">
+              * Untuk Stock Opname: isi angka positif (misal 2) jika stok fisik lebih banyak, atau negatif (misal -2) jika stok fisik kurang.
+            </p>
+          </div>
+
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between border-t-2 border-swiss-ink pt-4 gap-3">
+            <div class="font-mono text-sm">
+              TOTAL NILAI NOTA: <strong id="tx-grand-total" class="text-lg">Rp 0</strong>
+            </div>
+            <button type="button" id="btn-save-tx" onclick="saveTransaction()" class="bg-swiss-red text-white px-6 py-3 text-xs font-bold uppercase tracking-wider hover:bg-swiss-ink transition-colors">
+              Simpan Transaksi
+            </button>
+          </div>
+        </div>
+
+        <!-- Riwayat Transaksi -->
+        <div class="bg-white border border-swiss-ink">
+          <div class="p-4 border-b border-swiss-ink flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-neutral-50">
+            <h3 class="font-bold text-xs uppercase tracking-wider">Riwayat Transaksi</h3>
+            <div class="flex gap-2">
+              <select id="filter-tx-type" onchange="renderTransactionsTable()" class="swiss-input py-1.5 text-xs w-auto">
+                <option value="ALL">Semua Jenis</option>
+                <option value="IN">Masuk</option>
+                <option value="OUT">Keluar</option>
+                <option value="ADJUSTMENT">Opname</option>
+              </select>
+              <input type="month" id="filter-tx-month" onchange="renderTransactionsTable()" class="swiss-input py-1.5 text-xs font-mono w-auto" />
+            </div>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="border-b border-swiss-line font-mono uppercase text-[11px] text-swiss-muted">
+                <tr>
+                  <th class="p-3">Tanggal</th>
+                  <th class="p-3">No. Bukti</th>
+                  <th class="p-3">Jenis</th>
+                  <th class="p-3">Partner / Unit</th>
+                  <th class="p-3">Nota</th>
+                  <th class="p-3 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="tx-history-body" class="divide-y divide-swiss-line"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ TAB 3: MASTER BARANG ============ -->
+      <section id="tab-items" class="tab-section hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-end justify-between border-b-2 border-swiss-ink pb-4 gap-3">
+          <div>
+            <p class="font-mono text-xs uppercase tracking-widest text-swiss-muted">03 — Katalog & Konversi Satuan</p>
+            <h2 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight">Master Barang</h2>
+          </div>
+          <button onclick="openItemModal()" class="bg-swiss-ink text-white px-4 py-2.5 text-xs font-semibold uppercase tracking-wider hover:bg-swiss-red transition-colors">
+            + Tambah Barang Baru
+          </button>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-3">
+          <input type="text" id="search-item" oninput="renderItemsTable()" placeholder="Cari SKU atau nama barang..." class="swiss-input sm:max-w-sm" />
+          <select id="filter-item-cat" onchange="renderItemsTable()" class="swiss-input sm:max-w-xs"></select>
+        </div>
+
+        <div class="bg-white border border-swiss-ink overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="border-b border-swiss-ink bg-neutral-50 font-mono uppercase text-[11px] text-swiss-muted">
+              <tr>
+                <th class="p-3">SKU</th>
+                <th class="p-3">Nama Barang</th>
+                <th class="p-3">Kategori</th>
+                <th class="p-3">Stok Tersedia (Otomatis)</th>
+                <th class="p-3">Konversi Satuan</th>
+                <th class="p-3 text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="items-table-body" class="divide-y divide-swiss-line"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ============ TAB 4: KARTU STOK & ARSIP NOTA ============ -->
+      <section id="tab-reports" class="tab-section hidden space-y-6">
+        <div class="border-b-2 border-swiss-ink pb-4">
+          <p class="font-mono text-xs uppercase tracking-widest text-swiss-muted">04 — Audit & Export</p>
+          <h2 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight">Kartu Stok & Arsip Nota</h2>
+        </div>
+
+        <!-- Kartu Stok -->
+        <div class="bg-white border border-swiss-ink p-4 md:p-6 space-y-4">
+          <div class="flex flex-col md:flex-row md:items-end justify-between gap-3">
+            <div class="flex-1 max-w-md">
+              <label class="block font-mono text-[11px] uppercase mb-1">Pilih Barang untuk Kartu Stok</label>
+              <select id="report-item-select" onchange="loadStockCard()" class="swiss-input"></select>
+            </div>
+            <div class="flex gap-2">
+              <button onclick="exportStockSummaryCSV()" class="border border-swiss-ink px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-ink hover:text-white">
+                Export Stok (CSV/Excel)
+              </button>
+              <button onclick="exportTransactionsCSV()" class="border border-swiss-ink px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-ink hover:text-white">
+                Export Jurnal (CSV/Excel)
+              </button>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto border border-swiss-line">
+            <table class="w-full text-left text-xs">
+              <thead class="border-b border-swiss-line bg-neutral-50 font-mono uppercase text-[11px] text-swiss-muted">
+                <tr>
+                  <th class="p-3">Tanggal</th>
+                  <th class="p-3">No. Bukti</th>
+                  <th class="p-3">Jenis</th>
+                  <th class="p-3">Partner</th>
+                  <th class="p-3">Input</th>
+                  <th class="p-3">Mutasi (Base)</th>
+                  <th class="p-3 text-right">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody id="stock-card-body" class="divide-y divide-swiss-line"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Rekap Foto Nota -->
+        <div class="bg-white border border-swiss-ink p-4 md:p-6 space-y-4">
+          <h3 class="font-bold text-xs uppercase tracking-wider border-b border-swiss-line pb-2">Rekap Arsip Foto Nota (Google Drive)</h3>
+          <div id="receipt-gallery" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+        </div>
+      </section>
+
+      <!-- ============ TAB 5: KATEGORI & PARTNER ============ -->
+      <section id="tab-master" class="tab-section hidden space-y-6">
+        <div class="border-b-2 border-swiss-ink pb-4">
+          <p class="font-mono text-xs uppercase tracking-widest text-swiss-muted">05 — Referensi Data</p>
+          <h2 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight">Kategori & Partner</h2>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <!-- Kategori -->
+          <div class="bg-white border border-swiss-ink p-5 space-y-4">
+            <h3 class="font-bold text-xs uppercase tracking-wider">Kategori Barang</h3>
+            <form id="form-category" class="flex gap-2">
+              <input type="text" id="cat-prefix" placeholder="Kode (ATK)" class="swiss-input w-24 font-mono uppercase" />
+              <input type="text" id="cat-name" required placeholder="Nama Kategori" class="swiss-input flex-1" />
+              <button type="submit" class="bg-swiss-ink text-white px-4 text-xs font-semibold uppercase hover:bg-swiss-red">Tambah</button>
+            </form>
+            <ul id="categories-list" class="divide-y divide-swiss-line text-xs"></ul>
+          </div>
+
+          <!-- Partner -->
+          <div class="bg-white border border-swiss-ink p-5 space-y-4">
+            <h3 class="font-bold text-xs uppercase tracking-wider">Partner (Supplier / Divisi / Customer)</h3>
+            <form id="form-partner" class="space-y-2">
+              <div class="flex gap-2">
+                <select id="partner-type" class="swiss-input w-36 font-mono text-xs">
+                  <option value="SUPPLIER">SUPPLIER</option>
+                  <option value="INTERNAL">DIVISI INTERNAL</option>
+                  <option value="CUSTOMER">CUSTOMER</option>
+                </select>
+                <input type="text" id="partner-name" required placeholder="Nama Toko / Divisi" class="swiss-input flex-1" />
+              </div>
+              <div class="flex gap-2">
+                <input type="text" id="partner-phone" placeholder="No. HP / Keterangan (opsional)" class="swiss-input flex-1" />
+                <button type="submit" class="bg-swiss-ink text-white px-4 text-xs font-semibold uppercase hover:bg-swiss-red">Tambah</button>
+              </div>
+            </form>
+            <ul id="partners-list" class="divide-y divide-swiss-line text-xs"></ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ TAB 6: PENGATURAN WHITE-LABEL ============ -->
+      <section id="tab-settings" class="tab-section hidden space-y-6">
+        <div class="border-b-2 border-swiss-ink pb-4">
+          <p class="font-mono text-xs uppercase tracking-widest text-swiss-muted">06 — Konfigurasi White-Label</p>
+          <h2 class="text-2xl md:text-3xl font-extrabold uppercase tracking-tight">Pengaturan Sistem</h2>
+        </div>
+
+        <form id="form-settings" class="bg-white border-2 border-swiss-ink p-6 max-w-2xl space-y-5">
+          <div>
+            <label class="block font-mono text-[11px] uppercase mb-1">Nama Instansi / Perusahaan (White-Label)</label>
+            <input type="text" id="set-company" required class="swiss-input font-semibold" />
+          </div>
+          <div>
+            <label class="block font-mono text-[11px] uppercase mb-1">Subjudul / Nama Unit</label>
+            <input type="text" id="set-subtitle" class="swiss-input" />
+          </div>
+          <div>
+            <label class="block font-mono text-[11px] uppercase mb-1">Alamat (Untuk Kop Cetak Bukti)</label>
+            <input type="text" id="set-address" class="swiss-input" />
+          </div>
+
+          <div class="border-t border-swiss-line pt-4 space-y-4">
+            <h3 class="font-bold text-xs uppercase tracking-wider">Jembatan Upload Foto Nota (Google Apps Script)</h3>
+            <div>
+              <label class="block font-mono text-[11px] uppercase mb-1">URL Web App (/exec)</label>
+              <input type="url" id="set-gdrive-url" class="swiss-input font-mono text-xs" placeholder="https://script.google.com/macros/s/.../exec" />
+            </div>
+            <div>
+              <label class="block font-mono text-[11px] uppercase mb-1">Secret Key (Sama dengan di Apps Script)</label>
+              <input type="password" id="set-gdrive-key" class="swiss-input font-mono text-xs" placeholder="Kode rahasia buatan Anda" />
+            </div>
+          </div>
+
+          <button type="submit" class="bg-swiss-red text-white px-6 py-3 text-xs font-bold uppercase tracking-wider hover:bg-swiss-ink transition-colors">
+            Simpan Pengaturan
+          </button>
+        </form>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ================= MODAL TAMBAH / EDIT BARANG ================= -->
+  <div id="modal-item" class="hidden fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4">
+    <div class="bg-white border-2 border-swiss-ink w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-4">
+      <div class="flex items-center justify-between border-b border-swiss-ink pb-3">
+        <h3 id="modal-item-title" class="font-extrabold text-sm uppercase tracking-wider">Tambah Barang</h3>
+        <button onclick="closeItemModal()" class="font-mono text-sm font-bold px-2">✕</button>
+      </div>
+
+      <form id="form-item" class="space-y-3">
+        <input type="hidden" id="item-id" />
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-mono text-[11px] uppercase mb-1">Kode SKU</label>
+            <input type="text" id="item-sku" required class="swiss-input font-mono uppercase" placeholder="ATK-001" />
+          </div>
+          <div>
+            <label class="block font-mono text-[11px] uppercase mb-1">Kategori</label>
+            <select id="item-category" class="swiss-input"></select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-mono text-[11px] uppercase mb-1">Nama Barang</label>
+          <input type="text" id="item-name" required class="swiss-input" placeholder="Kertas HVS A4 70gr" />
+        </div>
+
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block font-mono text-[11px] uppercase mb-1">Satuan Terkecil</label>
+            <input type="text" id="item-base-unit" required class="swiss-input font-mono uppercase" placeholder="RIM / PCS" />
+          </div>
+          <div>
+            <label class="block font-mono text-[11px] uppercase mb-1">Stok Minimum</label>
+            <input type="number" id="item-min-stock" value="5" min="0" class="swiss-input font-mono" />
+          </div>
+          <div>
+            <label class="block font-mono text-[11px] uppercase mb-1">Lokasi Rak</label>
+            <input type="text" id="item-location" class="swiss-input" placeholder="Rak A1" />
+          </div>
+        </div>
+
+        <!-- Konversi Satuan -->
+        <div class="border-t border-swiss-line pt-3">
+          <div class="flex items-center justify-between mb-2">
+            <label class="font-mono text-[11px] uppercase font-semibold">Satuan Lebih Besar (Opsional)</label>
+            <button type="button" onclick="addUnitRow()" class="text-[11px] font-mono underline">+ Tambah Satuan</button>
+          </div>
+          <div id="item-units-container" class="space-y-2"></div>
+          <p class="text-[11px] text-swiss-muted mt-1">Contoh: Satuan <b>BOX</b>, Isi <b>5</b> (artinya 1 BOX = 5 satuan terkecil).</p>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-3 border-t border-swiss-line">
+          <button type="button" onclick="closeItemModal()" class="border border-swiss-ink px-4 py-2 text-xs font-semibold uppercase">Batal</button>
+          <button type="submit" class="bg-swiss-red text-white px-5 py-2 text-xs font-bold uppercase hover:bg-swiss-ink">Simpan Barang</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= MODAL DETAIL TRANSAKSI ================= -->
+  <div id="modal-tx-detail" class="hidden fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4">
+    <div class="bg-white border-2 border-swiss-ink w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-4">
+      <div class="flex items-center justify-between border-b-2 border-swiss-ink pb-3">
+        <div>
+          <h3 class="brand-name font-extrabold text-sm uppercase">SISTEM INVENTARIS ATK</h3>
+          <p id="detail-tx-ref" class="font-mono text-xs text-swiss-muted"></p>
+        </div>
+        <button onclick="closeTxDetailModal()" class="font-mono text-sm font-bold px-2 no-print">✕</button>
+      </div>
+      <div id="detail-tx-content" class="text-xs space-y-4"></div>
+      <div class="flex justify-end gap-2 pt-3 border-t border-swiss-line no-print">
+        <button onclick="window.print()" class="border border-swiss-ink px-4 py-2 text-xs font-semibold uppercase hover:bg-swiss-ink hover:text-white">Cetak Bukti</button>
+        <button onclick="closeTxDetailModal()" class="bg-swiss-ink text-white px-4 py-2 text-xs font-semibold uppercase">Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
