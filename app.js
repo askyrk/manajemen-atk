@@ -3511,5 +3511,582 @@ if (typeof buildCommandList === 'function') {
 
   setTimeout(scanAndEnhance, 300);
 })();
+// ==========================================
+// 16. PELACAKAN PIUTANG & CICILAN CUSTOMER
+// ==========================================
+let arCache = [];
+let arCurrentTxId = null;
+
+function arCanAccess() {
+  return Boolean(state.profile && (state.profile.is_super_admin || state.profile.can_view_prices));
+}
+
+function arFmtRp(val) {
+  return 'Rp ' + Math.round(Number(val || 0)).toLocaleString('id-ID');
+}
+
+function arCalcTotal(tx) {
+  if (tx.total_amount != null && Number(tx.total_amount) > 0) return Number(tx.total_amount);
+  const items = tx.transaction_items || [];
+  return items.reduce((sum, it) => {
+    const qty = Number(it.quantity ?? it.qty ?? 0);
+    const price = Number(it.unit_price ?? it.price ?? 0);
+    const sub = it.subtotal ?? it.total_price ?? (qty * price);
+    return sum + (Number(sub) || 0);
+  }, 0);
+}
+
+function arCalcPaid(tx, total) {
+  const pays = tx.transaction_payments || [];
+  const sumPays = pays.reduce((s, p) => s + Number(p.amount || 0), 0);
+  if (tx.payment_status === 'PAID') return Math.max(sumPays, Number(tx.paid_amount || 0), total);
+  return sumPays > 0 ? sumPays : Number(tx.paid_amount || 0);
+}
+
+function arGetRef(tx) {
+  return tx.reference_no || tx.invoice_no || tx.tx_number || tx.code || ('OUT-' + String(tx.id).slice(0, 6).toUpperCase());
+}
+
+function arGetCustomer(tx) {
+  if (tx.partners?.name) return tx.partners.name;
+  if (tx.partner_name) return tx.partner_name;
+  const p = (state.partners || []).find(x => x.id === tx.partner_id);
+  return p ? p.name : 'Customer Umum';
+}
+
+// 1) Sisipkan pilihan Status Pembayaran & Jatuh Tempo saat memilih STOK KELUAR
+function injectARFormControls() {
+  const tabTx = document.getElementById('tab-transactions');
+  if (!tabTx || document.getElementById('tx-ar-box')) return;
+
+  const selects = Array.from(tabTx.querySelectorAll('select'));
+  const typeSelect = selects.find(s => Array.from(s.options).some(o => o.value === 'OUT'));
+  if (!typeSelect) return;
+
+  const form = typeSelect.closest('form');
+  if (!form) return;
+
+  const box = document.createElement('div');
+  box.id = 'tx-ar-box';
+  box.className = 'hidden grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 border border-swiss-ink bg-neutral-50 rounded-lg my-3';
+  box.innerHTML = `
+    <div>
+      <label class="block font-mono text-[10px] uppercase mb-1 text-swiss-muted">Status Pembayaran Customer</label>
+      <select id="tx-ar-status" class="swiss-input text-xs font-semibold">
+        <option value="UNPAID">PIUTANG (Belum Lunas / Tempo)</option>
+        <option value="PAID">LUNAS (Tunai / Transfer Langsung)</option>
+      </select>
+    </div>
+    <div>
+      <label class="block font-mono text-[10px] uppercase mb-1 text-swiss-muted">Jatuh Tempo (Opsional)</label>
+      <input type="date" id="tx-ar-due-date" class="swiss-input text-xs" />
+    </div>
+  `;
+
+  // Letakkan tepat di atas blok daftar barang atau di bawah baris input utama
+  const firstGrid = typeSelect.closest('.grid');
+  if (firstGrid && firstGrid.parentNode) {
+    firstGrid.parentNode.insertBefore(box, firstGrid.nextSibling);
+  } else {
+    form.prepend(box);
+  }
+
+  const toggleBox = () => {
+    const isOut = typeSelect.value === 'OUT';
+    box.classList.toggle('hidden', !isOut || !arCanAccess());
+  };
+
+  typeSelect.addEventListener('change', toggleBox);
+  form.addEventListener('reset', () => setTimeout(toggleBox, 30));
+  toggleBox();
+}
+
+// 2) Otomatis sisipkan status piutang saat menyimpan transaksi STOK KELUAR
+(function hookARInsert() {
+  if (!window.db || db.__arHooked) return;
+  db.__arHooked = true;
+  const _origFrom = db.from.bind(db);
+  db.from = function (table) {
+    const builder = _origFrom(table);
+    if (table === 'transactions') {
+      const _origInsert = builder.insert.bind(builder);
+      builder.insert = function (values, options) {
+        const statusEl = document.getElementById('tx-ar-status');
+        const dueEl = document.getElementById('tx-ar-due-date');
+        const applyRow = (r) => {
+          if (r && r.type === 'OUT') {
+            const st = statusEl ? statusEl.value : 'UNPAID';
+            return {
+              ...r,
+              payment_status: st,
+              paid_amount: st === 'PAID' ? Number(r.total_amount || 0) : 0,
+              due_date: (st === 'UNPAID' && dueEl && dueEl.value) ? dueEl.value : null
+            };
+          }
+          return r;
+        };
+        const patched = Array.isArray(values) ? values.map(applyRow) : applyRow(values);
+        const res = _origInsert(patched, options);
+        setTimeout(() => { if (arCanAccess()) loadARData(); }, 900);
+        return res;
+      };
+    }
+    return builder;
+  };
+})();
+
+// 3) Muat data Piutang & Cicilan dari Supabase
+async function loadARData() {
+  if (!arCanAccess()) return;
+  const { data, error } = await db
+    .from('transactions')
+    .select('*, partners(*), transaction_items(*), transaction_payments(*)')
+    .eq('type', 'OUT')
+    .order('transaction_date', { ascending: false });
+
+  if (error) {
+    console.warn('AR Load Error:', error.message);
+    return;
+  }
+
+  arCache = (data || []).map(tx => {
+    const total = arCalcTotal(tx);
+    const paid = arCalcPaid(tx, total);
+    const remaining = Math.max(0, total - paid);
+    let status = tx.payment_status || 'PAID';
+    if (remaining <= 0 && total > 0) status = 'PAID';
+    else if (paid > 0 && remaining > 0) status = 'PARTIAL';
+    else if (remaining > 0) status = 'UNPAID';
+
+    return {
+      ...tx,
+      _ref: arGetRef(tx),
+      _customer: arGetCustomer(tx),
+      _total: total,
+      _paid: paid,
+      _remaining: remaining,
+      _status: status
+    };
+  });
+
+  renderARKpiCard();
+  renderARPanel();
+}
+
+// 4) Kartu KPI Piutang di Dashboard
+function renderARKpiCard() {
+  if (!arCanAccess()) return;
+  const dash = document.getElementById('tab-dashboard');
+  if (!dash) return;
+
+  const kpiGrid = dash.querySelector('.grid');
+  if (!kpiGrid) return;
+
+  let card = document.getElementById('kpi-ar-card');
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'kpi-ar-card';
+    card.className = 'bg-white border border-swiss-ink p-4 cursor-pointer';
+    card.title = 'Klik untuk membuka Rekap Piutang Instansi';
+    card.onclick = () => {
+      switchTab('recap');
+      setTimeout(() => document.getElementById('ar-panel-section')?.scrollIntoView({ behavior: 'smooth' }), 100);
+    };
+    kpiGrid.appendChild(card);
+  }
+
+  const openList = arCache.filter(x => x._remaining > 0);
+  const totalPiutang = openList.reduce((s, x) => s + x._remaining, 0);
+
+  card.innerHTML = `
+    <p class="font-mono text-[10px] uppercase tracking-wider text-swiss-red font-semibold">Piutang Belum Lunas</p>
+    <p class="text-2xl font-extrabold font-mono mt-1 text-swiss-red">${arFmtRp(totalPiutang)}</p>
+    <p class="font-mono text-[10px] text-swiss-muted mt-1">${openList.length} nota aktif • Klik kelola →</p>
+  `;
+}
+
+// 5) Panel Rekap Piutang & Cicilan di Tab 06 / Rekap Divisi & Toko
+function ensureARPanelDOM() {
+  const recapTab = document.getElementById('tab-recap');
+  if (!recapTab || document.getElementById('ar-panel-section')) return;
+
+  const sec = document.createElement('div');
+  sec.id = 'ar-panel-section';
+  sec.className = 'bg-white border border-swiss-ink p-5 space-y-4 mb-6';
+  sec.innerHTML = `
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-swiss-line pb-3">
+      <div>
+        <p class="font-mono text-[10px] uppercase text-swiss-red font-semibold">Kontrol Tagihan & Termin</p>
+        <h3 class="font-bold text-sm uppercase tracking-wider">Pelacakan Piutang Customer / Instansi</h3>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <select id="ar-filter-status" onchange="renderARPanel()" class="swiss-input text-xs py-1.5 w-auto">
+          <option value="OPEN">Belum Lunas (Piutang & Sebagian)</option>
+          <option value="ALL">Semua Nota Keluar</option>
+          <option value="PAID">Sudah Lunas</option>
+        </select>
+        <select id="ar-filter-customer" onchange="renderARPanel()" class="swiss-input text-xs py-1.5 w-auto">
+          <option value="">Semua Instansi / Customer</option>
+        </select>
+        <button type="button" onclick="exportARCSV()" class="border border-swiss-ink bg-white px-3 py-1.5 text-xs font-mono font-semibold hover:bg-neutral-100">
+          ↓ Export Piutang CSV
+        </button>
+      </div>
+    </div>
+
+    <div id="ar-customer-chips" class="flex flex-wrap gap-2"></div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-left border-collapse text-xs">
+        <thead>
+          <tr class="border-b border-swiss-ink bg-neutral-50 font-mono text-[10px] uppercase">
+            <th class="p-2.5">Tanggal & Nota</th>
+            <th class="p-2.5">Instansi / Customer</th>
+            <th class="p-2.5 text-right">Total Nota</th>
+            <th class="p-2.5 text-right">Terbayar</th>
+            <th class="p-2.5 text-right">Sisa Piutang</th>
+            <th class="p-2.5 text-center">Status</th>
+            <th class="p-2.5 text-right">Aksi</th>
+          </tr>
+        </thead>
+        <tbody id="ar-table-body" class="divide-y divide-swiss-line"></tbody>
+      </table>
+    </div>
+  `;
+
+  // Sisipkan tepat setelah judul halaman di tab-recap
+  const firstChild = recapTab.firstElementChild;
+  if (firstChild && firstChild.nextSibling) {
+    recapTab.insertBefore(sec, firstChild.nextSibling);
+  } else {
+    recapTab.prepend(sec);
+  }
+}
+
+function renderARPanel() {
+  if (!arCanAccess()) return;
+  ensureARPanelDOM();
+
+  const statusFilter = document.getElementById('ar-filter-status')?.value || 'OPEN';
+  const custSelect = document.getElementById('ar-filter-customer');
+  const currentCust = custSelect?.value || '';
+
+  // Isi opsi dropdown instansi
+  if (custSelect) {
+    const names = Array.from(new Set(arCache.map(x => x._customer))).sort();
+    custSelect.innerHTML = '<option value="">Semua Instansi / Customer</option>' +
+      names.map(n => `<option value="${escapeHtml(n)}" ${n === currentCust ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('');
+  }
+
+  // Rekap chip instansi yang masih punya piutang
+  const chipsEl = document.getElementById('ar-customer-chips');
+  if (chipsEl) {
+    const byCust = {};
+    arCache.filter(x => x._remaining > 0).forEach(x => {
+      byCust[x._customer] = (byCust[x._customer] || 0) + x._remaining;
+    });
+    const entries = Object.entries(byCust).sort((a, b) => b[1] - a[1]);
+    chipsEl.innerHTML = entries.length === 0
+      ? '<span class="font-mono text-[11px] text-swiss-muted">Semua nota keluar di sistem baru sudah lunas.</span>'
+      : entries.map(([name, amt]) => `
+          <button type="button" onclick="selectARCustomer('${escapeHtml(name).replace(/'/g, "\\'")}')"
+            class="border border-swiss-line px-2.5 py-1 rounded text-[11px] font-mono hover:border-swiss-red ${currentCust === name ? 'bg-swiss-ink text-white' : 'bg-neutral-50'}">
+            ${escapeHtml(name)}: <strong>${arFmtRp(amt)}</strong>
+          </button>
+        `).join('');
+  }
+
+  const rows = arCache.filter(x => {
+    if (statusFilter === 'OPEN' && x._remaining <= 0) return false;
+    if (statusFilter === 'PAID' && x._remaining > 0) return false;
+    if (currentCust && x._customer !== currentCust) return false;
+    return true;
+  });
+
+  const tbody = document.getElementById('ar-table-body');
+  if (!tbody) return;
+
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="p-5 text-center font-mono text-xs text-swiss-muted">Tidak ada nota pada filter ini.</td></tr>';
+    return;
+  }
+
+  const today = new Date().toISOString().split('T')[0];
+
+  tbody.innerHTML = rows.map(tx => {
+    const isOverdue = tx._remaining > 0 && tx.due_date && tx.due_date < today;
+    const badge = tx._status === 'PAID'
+      ? '<span class="px-2 py-0.5 bg-swiss-ink text-white font-mono text-[10px] uppercase">LUNAS</span>'
+      : tx._status === 'PARTIAL'
+        ? '<span class="px-2 py-0.5 bg-amber-500 text-white font-mono text-[10px] uppercase">SEBAGIAN</span>'
+        : '<span class="px-2 py-0.5 bg-swiss-red text-white font-mono text-[10px] uppercase">PIUTANG</span>';
+
+    const dueInfo = tx.due_date
+      ? `<div class="font-mono text-[10px] ${isOverdue ? 'text-swiss-red font-bold' : 'text-swiss-muted'}">Tempo: ${tx.due_date}${isOverdue ? ' (LEWAT)' : ''}</div>`
+      : '';
+
+    return `
+      <tr class="hover:bg-neutral-50">
+        <td class="p-2.5 font-mono">
+          <div class="font-semibold">${escapeHtml(tx._ref)}</div>
+          <div class="text-[10px] text-swiss-muted">${escapeHtml((tx.transaction_date || '').substring(0, 10))}</div>
+        </td>
+        <td class="p-2.5">
+          <div class="font-semibold">${escapeHtml(tx._customer)}</div>
+          ${dueInfo}
+        </td>
+        <td class="p-2.5 text-right font-mono">${arFmtRp(tx._total)}</td>
+        <td class="p-2.5 text-right font-mono text-emerald-600">${arFmtRp(tx._paid)}</td>
+        <td class="p-2.5 text-right font-mono font-bold ${tx._remaining > 0 ? 'text-swiss-red' : ''}">${arFmtRp(tx._remaining)}</td>
+        <td class="p-2.5 text-center">${badge}</td>
+        <td class="p-2.5 text-right">
+          <button type="button" onclick="openARModal('${tx.id}')" class="border border-swiss-ink bg-white px-2.5 py-1 text-[11px] font-mono font-semibold hover:bg-neutral-100">
+            ${tx._remaining > 0 ? '+ Bayar / Cicil' : 'Riwayat'}
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function selectARCustomer(name) {
+  const sel = document.getElementById('ar-filter-customer');
+  if (!sel) return;
+  sel.value = sel.value === name ? '' : name;
+  renderARPanel();
+}
+
+// 6) Modal Riwayat & Input Cicilan
+function ensureARModalDOM() {
+  if (document.getElementById('modal-ar-payment')) return;
+  const el = document.createElement('div');
+  el.id = 'modal-ar-payment';
+  el.className = 'hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4';
+  el.innerHTML = `
+    <div class="bg-white border-2 border-swiss-ink w-full max-w-lg max-h-[90vh] overflow-y-auto p-5 space-y-4">
+      <div class="flex items-center justify-between border-b border-swiss-line pb-3">
+        <div>
+          <p class="font-mono text-[10px] uppercase text-swiss-muted">Pembayaran & Cicilan Nota</p>
+          <h3 id="ar-modal-title" class="font-extrabold text-base uppercase">-</h3>
+        </div>
+        <button type="button" onclick="closeARModal()" class="font-mono text-sm font-bold px-2 py-1 hover:text-swiss-red">✕</button>
+      </div>
+
+      <div id="ar-modal-summary" class="grid grid-cols-3 gap-2 text-center font-mono text-xs"></div>
+
+      <div>
+        <p class="font-mono text-[10px] uppercase text-swiss-muted mb-2">Riwayat Pembayaran / Termin</p>
+        <div id="ar-modal-history" class="space-y-1.5 max-h-44 overflow-y-auto"></div>
+      </div>
+
+      <form id="ar-payment-form" onsubmit="saveARPayment(event)" class="space-y-3 pt-3 border-t border-swiss-line">
+        <p class="font-mono text-[10px] uppercase font-bold text-swiss-red">+ Catat Pembayaran Baru</p>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-mono text-[10px] uppercase mb-1">Tanggal Bayar</label>
+            <input type="date" id="ar-pay-date" required class="swiss-input text-xs" />
+          </div>
+          <div>
+            <label class="block font-mono text-[10px] uppercase mb-1">Nominal Bayar (Rp)</label>
+            <input type="number" id="ar-pay-amount" required min="1" step="any" class="swiss-input text-xs font-mono font-bold" />
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-mono text-[10px] uppercase mb-1">Metode</label>
+            <select id="ar-pay-method" class="swiss-input text-xs">
+              <option value="Transfer Bank">Transfer Bank</option>
+              <option value="SP2D / Kas Daerah">SP2D / Kas Daerah</option>
+              <option value="Tunai">Tunai</option>
+              <option value="QRIS / Lainnya">QRIS / Lainnya</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-mono text-[10px] uppercase mb-1">Catatan (Opsional)</label>
+            <input type="text" id="ar-pay-notes" class="swiss-input text-xs" placeholder="Misal: Termin 1 / Lunas" />
+          </div>
+        </div>
+        <button type="submit" id="btn-ar-save" class="w-full bg-swiss-ink text-white py-2.5 text-xs font-mono font-bold uppercase hover:bg-swiss-red">
+          Simpan Pembayaran
+        </button>
+      </form>
+    </div>
+  `;
+  document.body.appendChild(el);
+}
+
+function openARModal(txId) {
+  ensureARModalDOM();
+  arCurrentTxId = txId;
+  const tx = arCache.find(x => x.id === txId);
+  if (!tx) return;
+
+  document.getElementById('ar-modal-title').textContent = `${tx._ref} — ${tx._customer}`;
+  document.getElementById('ar-modal-summary').innerHTML = `
+    <div class="p-2.5 border border-swiss-line rounded bg-neutral-50">
+      <div class="text-[10px] text-swiss-muted">TOTAL</div>
+      <div class="font-bold mt-0.5">${arFmtRp(tx._total)}</div>
+    </div>
+    <div class="p-2.5 border border-swiss-line rounded bg-neutral-50">
+      <div class="text-[10px] text-swiss-muted">TERBAYAR</div>
+      <div class="font-bold mt-0.5 text-emerald-600">${arFmtRp(tx._paid)}</div>
+    </div>
+    <div class="p-2.5 border border-swiss-line rounded bg-neutral-50">
+      <div class="text-[10px] text-swiss-muted">SISA</div>
+      <div class="font-bold mt-0.5 text-swiss-red">${arFmtRp(tx._remaining)}</div>
+    </div>
+  `;
+
+  const canDel = state.profile?.is_super_admin || state.profile?.can_delete_tx;
+  const pays = [...(tx.transaction_payments || [])].sort((a, b) => (a.payment_date || '').localeCompare(b.payment_date || ''));
+  const histEl = document.getElementById('ar-modal-history');
+
+  if (pays.length === 0) {
+    histEl.innerHTML = `<p class="text-xs font-mono text-swiss-muted p-2 border border-dashed border-swiss-line rounded">${tx._status === 'PAID' ? 'Dibayar lunas saat transaksi dibuat.' : 'Belum ada cicilan tercatat.'}</p>`;
+  } else {
+    histEl.innerHTML = pays.map((p, i) => `
+      <div class="flex items-center justify-between gap-2 p-2 border border-swiss-line rounded text-xs">
+        <div>
+          <span class="font-mono font-bold">#${i + 1} ${escapeHtml(p.payment_date || '')}</span>
+          <span class="text-swiss-muted"> • ${escapeHtml(p.method || 'Transfer')}</span>
+          ${p.notes ? `<div class="text-[11px] text-swiss-muted">${escapeHtml(p.notes)}</div>` : ''}
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="font-mono font-bold text-emerald-600">${arFmtRp(p.amount)}</span>
+          ${canDel ? `<button type="button" onclick="deleteARPayment('${p.id}')" class="text-swiss-red font-mono text-xs px-1.5 hover:underline" title="Hapus pembayaran">✕</button>` : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  const form = document.getElementById('ar-payment-form');
+  if (tx._remaining <= 0) {
+    form.classList.add('hidden');
+  } else {
+    form.classList.remove('hidden');
+    document.getElementById('ar-pay-date').value = new Date().toISOString().split('T')[0];
+    document.getElementById('ar-pay-amount').value = Math.round(tx._remaining);
+    document.getElementById('ar-pay-notes').value = '';
+  }
+
+  document.getElementById('modal-ar-payment').classList.remove('hidden');
+}
+
+function closeARModal() {
+  document.getElementById('modal-ar-payment')?.classList.add('hidden');
+  arCurrentTxId = null;
+}
+
+async function syncTransactionARStatus(txId) {
+  const tx = arCache.find(x => x.id === txId);
+  const total = tx ? tx._total : 0;
+
+  const { data: pays } = await db
+    .from('transaction_payments')
+    .select('amount')
+    .eq('transaction_id', txId);
+
+  const paidSum = (pays || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+  let newStatus = 'UNPAID';
+  if (total > 0 && paidSum >= total) newStatus = 'PAID';
+  else if (paidSum > 0) newStatus = 'PARTIAL';
+
+  await db
+    .from('transactions')
+    .update({ paid_amount: paidSum, payment_status: newStatus })
+    .eq('id', txId);
+}
+
+async function saveARPayment(e) {
+  e.preventDefault();
+  if (!arCurrentTxId) return;
+  const tx = arCache.find(x => x.id === arCurrentTxId);
+  const amount = Number(document.getElementById('ar-pay-amount').value || 0);
+  const payDate = document.getElementById('ar-pay-date').value;
+  const method = document.getElementById('ar-pay-method').value;
+  const notes = document.getElementById('ar-pay-notes').value.trim();
+
+  if (amount <= 0) return showToast('Nominal pembayaran harus lebih dari 0.', 'error');
+  if (tx && amount > tx._remaining + 1) {
+    if (!confirm(`Nominal (${arFmtRp(amount)}) melebihi sisa piutang (${arFmtRp(tx._remaining)}). Tetap simpan?`)) return;
+  }
+
+  const btn = document.getElementById('btn-ar-save');
+  btn.disabled = true;
+  btn.textContent = 'Menyimpan...';
+
+  try {
+    const { error } = await db.from('transaction_payments').insert({
+      transaction_id: arCurrentTxId,
+      payment_date: payDate,
+      amount,
+      method,
+      notes,
+      created_by: state.user?.id || null
+    });
+    if (error) throw error;
+
+    await syncTransactionARStatus(arCurrentTxId);
+    await loadARData();
+    openARModal(arCurrentTxId);
+    showToast('Pembayaran berhasil dicatat!');
+  } catch (err) {
+    showToast('Gagal menyimpan pembayaran: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Simpan Pembayaran';
+  }
+}
+
+async function deleteARPayment(paymentId) {
+  if (!confirm('Hapus catatan pembayaran ini? Saldo piutang akan dikembalikan.')) return;
+  const { error } = await db.from('transaction_payments').delete().eq('id', paymentId);
+  if (error) return showToast('Gagal menghapus: ' + error.message, 'error');
+
+  await syncTransactionARStatus(arCurrentTxId);
+  await loadARData();
+  openARModal(arCurrentTxId);
+  showToast('Catatan pembayaran dihapus.');
+}
+
+function exportARCSV() {
+  const openRows = arCache.filter(x => x._remaining > 0);
+  if (openRows.length === 0) return showToast('Tidak ada piutang aktif untuk diexport.');
+
+  const header = ['No Nota', 'Tanggal', 'Instansi / Customer', 'Jatuh Tempo', 'Total Nota', 'Terbayar', 'Sisa Piutang', 'Status'];
+  const lines = [header.join(',')].concat(openRows.map(r => [
+    `"${r._ref}"`,
+    `"${(r.transaction_date || '').substring(0, 10)}"`,
+    `"${r._customer.replace(/"/g, '""')}"`,
+    `"${r.due_date || ''}"`,
+    r._total,
+    r._paid,
+    r._remaining,
+    `"${r._status}"`
+  ].join(',')));
+
+  const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Rekap_Piutang_ATK_${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// 7) Integrasi otomatis saat login & pindah tab
+const _origShowAppAR = showApp;
+showApp = async function (...args) {
+  await _origShowAppAR(...args);
+  injectARFormControls();
+  if (arCanAccess()) await loadARData();
+};
+
+const _origSwitchTabAR = switchTab;
+switchTab = function (tabId) {
+  _origSwitchTabAR(tabId);
+  if (tabId === 'transactions') injectARFormControls();
+  if (tabId === 'recap' && arCanAccess()) loadARData();
+};
 // Mulai aplikasi
 checkSession();
