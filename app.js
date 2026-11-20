@@ -3288,5 +3288,228 @@ if (typeof buildCommandList === 'function') {
     });
   };
 }
+// ==========================================
+// 15. SEARCHABLE DROPDOWN UNTUK PILIH BARANG
+// ==========================================
+(function initSearchableItemSelects() {
+  let activeSelect = null;
+  let activeInput = null;
+  let filteredOpts = [];
+  let highlightIdx = 0;
+
+  function getFloatingMenu() {
+    let menu = document.getElementById('ss-floating-menu');
+    if (!menu) {
+      menu = document.createElement('div');
+      menu.id = 'ss-floating-menu';
+      document.body.appendChild(menu);
+    }
+    return menu;
+  }
+
+  function isItemSelect(sel) {
+    if (!sel || sel.tagName !== 'SELECT') return false;
+    if (sel.dataset.searchableInit === '1') return false;
+    const firstText = sel.options[0]?.textContent || '';
+    return /pilih barang/i.test(firstText) || sel.id === 'report-item-select' || sel.options.length > 20;
+  }
+
+  function syncInputFromSelect(sel, input) {
+    const chosen = sel.options[sel.selectedIndex];
+    if (chosen && chosen.value) {
+      input.value = chosen.textContent.trim();
+    } else {
+      input.value = '';
+    }
+  }
+
+  function positionMenu(input) {
+    const menu = getFloatingMenu();
+    const rect = input.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const menuWidth = Math.max(rect.width, 320);
+
+    menu.style.width = `${Math.min(menuWidth, window.innerWidth - 24)}px`;
+    menu.style.left = `${Math.min(rect.left, window.innerWidth - menuWidth - 12)}px`;
+
+    if (spaceBelow < 220 && rect.top > 240) {
+      menu.style.top = 'auto';
+      menu.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+    } else {
+      menu.style.bottom = 'auto';
+      menu.style.top = `${rect.bottom + 4}px`;
+    }
+  }
+
+  function renderMenu(query) {
+    if (!activeSelect || !activeInput) return;
+    const menu = getFloatingMenu();
+    const terms = (query || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+
+    filteredOpts = Array.from(activeSelect.options).filter(opt => {
+      if (!opt.value) return false;
+      if (terms.length === 0) return true;
+      const text = opt.textContent.toLowerCase();
+      return terms.every(t => text.includes(t));
+    });
+
+    highlightIdx = 0;
+
+    if (filteredOpts.length === 0) {
+      menu.innerHTML = '<div class="ss-empty">Barang tidak ditemukan.</div>';
+    } else {
+      const limit = filteredOpts.slice(0, 80);
+      menu.innerHTML = limit.map((opt, idx) => `
+        <div class="ss-option ${idx === 0 ? 'active' : ''}" data-ss-idx="${idx}">
+          ${escapeHtml(opt.textContent.trim())}
+        </div>
+      `).join('') + (filteredOpts.length > 80
+        ? `<div class="ss-empty">Menampilkan 80 dari ${filteredOpts.length} barang — ketik lebih spesifik...</div>`
+        : '');
+
+      menu.querySelectorAll('.ss-option').forEach(el => {
+        el.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          const idx = Number(el.dataset.ssIdx);
+          chooseOption(limit[idx]);
+        });
+      });
+    }
+
+    positionMenu(activeInput);
+    menu.style.display = 'block';
+  }
+
+  function chooseOption(opt) {
+    if (!activeSelect || !activeInput || !opt) return;
+    activeSelect.value = opt.value;
+    activeInput.value = opt.textContent.trim();
+    activeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+    closeMenu();
+  }
+
+  function closeMenu() {
+    const menu = getFloatingMenu();
+    menu.style.display = 'none';
+    if (activeSelect && activeInput) {
+      syncInputFromSelect(activeSelect, activeInput);
+    }
+    activeSelect = null;
+    activeInput = null;
+  }
+
+  function highlightOption() {
+    const menu = getFloatingMenu();
+    const items = menu.querySelectorAll('.ss-option');
+    items.forEach((el, idx) => {
+      const on = idx === highlightIdx;
+      el.classList.toggle('active', on);
+      if (on) el.scrollIntoView({ block: 'nearest' });
+    });
+  }
+
+  function enhanceSelect(sel) {
+    sel.dataset.searchableInit = '1';
+
+    const wrap = document.createElement('div');
+    wrap.className = 'ss-wrap';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = (sel.className || 'swiss-input text-xs') + ' ss-input';
+    input.placeholder = 'Ketik nama / SKU barang...';
+    input.autocomplete = 'off';
+
+    const arrow = document.createElement('span');
+    arrow.className = 'ss-arrow';
+    arrow.textContent = '▼';
+
+    sel.parentNode.insertBefore(wrap, sel);
+    wrap.appendChild(input);
+    wrap.appendChild(arrow);
+    wrap.appendChild(sel);
+    sel.style.display = 'none';
+
+    syncInputFromSelect(sel, input);
+
+    // Sinkronkan tampilan jika nilai select berubah dari kode (misal Ctrl+K atau reset form)
+    sel.addEventListener('change', () => {
+      if (activeSelect !== sel) syncInputFromSelect(sel, input);
+    });
+
+    const form = sel.closest('form');
+    if (form) {
+      form.addEventListener('reset', () => {
+        setTimeout(() => syncInputFromSelect(sel, input), 10);
+      });
+    }
+
+    input.addEventListener('focus', () => {
+      activeSelect = sel;
+      activeInput = input;
+      input.select();
+      renderMenu('');
+    });
+
+    input.addEventListener('input', () => {
+      activeSelect = sel;
+      activeInput = input;
+      renderMenu(input.value);
+    });
+
+    input.addEventListener('keydown', (e) => {
+      const menu = getFloatingMenu();
+      const maxLen = Math.min(filteredOpts.length, 80);
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (maxLen > 0) {
+          highlightIdx = (highlightIdx + 1) % maxLen;
+          highlightOption();
+        }
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (maxLen > 0) {
+          highlightIdx = (highlightIdx - 1 + maxLen) % maxLen;
+          highlightOption();
+        }
+      } else if (e.key === 'Enter' && menu.style.display === 'block') {
+        e.preventDefault();
+        if (filteredOpts[highlightIdx]) {
+          chooseOption(filteredOpts[highlightIdx]);
+        }
+      } else if (e.key === 'Escape') {
+        closeMenu();
+        input.blur();
+      }
+    });
+
+    input.addEventListener('blur', () => {
+      setTimeout(() => {
+        if (activeInput === input) closeMenu();
+      }, 120);
+    });
+  }
+
+  function scanAndEnhance() {
+    document.querySelectorAll('select').forEach(sel => {
+      if (isItemSelect(sel)) enhanceSelect(sel);
+    });
+  }
+
+  // Pantau otomatis saat baris baru ditambahkan (+ Tambah Baris Barang) atau data selesai dimuat
+  const observer = new MutationObserver(() => scanAndEnhance());
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  window.addEventListener('resize', () => {
+    if (activeInput) positionMenu(activeInput);
+  });
+  window.addEventListener('scroll', (e) => {
+    if (activeInput && e.target?.id !== 'ss-floating-menu') {
+      positionMenu(activeInput);
+    }
+  }, true);
+
+  setTimeout(scanAndEnhance, 300);
+})();
 // Mulai aplikasi
 checkSession();
