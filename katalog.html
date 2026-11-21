@@ -54,28 +54,53 @@
     let allItems = [];
     let activeCategory = 'ALL';
 
-    const client = (typeof db !== 'undefined')
-      ? db
-      : supabase.createClient(
-          typeof SUPABASE_URL !== 'undefined' ? SUPABASE_URL : window.SUPABASE_URL,
-          typeof SUPABASE_ANON_KEY !== 'undefined' ? SUPABASE_ANON_KEY : window.SUPABASE_ANON_KEY
-        );
-
     const fmtRp = (n) => Number(n) > 0 ? 'Rp ' + Math.round(Number(n)).toLocaleString('id-ID') : 'Hubungi Admin';
     const esc = (s) => String(s || '').replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
 
-    async function loadCatalog() {
-      const { data, error } = await client.rpc('get_public_catalog');
-      const box = document.getElementById('catalog-container');
+    async function getSupabaseClient() {
+      if (typeof db !== 'undefined' && db?.rpc) return db;
+      if (typeof supabaseClient !== 'undefined' && supabaseClient?.rpc) return supabaseClient;
 
-      if (error) {
-        box.innerHTML = `<div class="p-6 text-center font-mono text-xs text-red-600">Gagal memuat katalog: ${esc(error.message)}</div>`;
-        return;
+      const cfg = (typeof APP_CONFIG !== 'undefined' ? APP_CONFIG : null)
+        || (typeof CONFIG !== 'undefined' ? CONFIG : null)
+        || window;
+
+      let url = (typeof SUPABASE_URL !== 'undefined' ? SUPABASE_URL : '') || cfg.SUPABASE_URL || cfg.supabaseUrl || '';
+      let key = (typeof SUPABASE_ANON_KEY !== 'undefined' ? SUPABASE_ANON_KEY : '')
+        || (typeof SUPABASE_KEY !== 'undefined' ? SUPABASE_KEY : '')
+        || cfg.SUPABASE_ANON_KEY || cfg.SUPABASE_KEY || cfg.supabaseAnonKey || cfg.supabaseKey || '';
+
+      // Fallback otomatis: baca URL & anon key langsung dari file config.js
+      if (!url || !key) {
+        const res = await fetch('config.js', { cache: 'no-store' });
+        const txt = await res.text();
+        const urlMatch = txt.match(/https:\/\/[a-z0-9-]+\.supabase\.co/i);
+        const keyMatch = txt.match(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/)
+          || txt.match(/sb_publishable_[A-Za-z0-9_-]+/);
+        if (urlMatch) url = urlMatch[0];
+        if (keyMatch) key = keyMatch[0];
       }
 
-      allItems = data || [];
-      renderCategoryChips();
-      renderList();
+      if (!url || !key) {
+        throw new Error('URL / Anon Key Supabase tidak ditemukan di config.js');
+      }
+      return window.supabase.createClient(url, key);
+    }
+
+    async function loadCatalog() {
+      const box = document.getElementById('catalog-container');
+      try {
+        const client = await getSupabaseClient();
+        const { data, error } = await client.rpc('get_public_catalog');
+        if (error) throw error;
+
+        allItems = data || [];
+        renderCategoryChips();
+        renderList();
+      } catch (err) {
+        document.getElementById('item-count').textContent = 'Error';
+        box.innerHTML = `<div class="p-6 text-center font-mono text-xs text-red-600">Gagal memuat katalog: ${esc(err.message || err)}</div>`;
+      }
     }
 
     function renderCategoryChips() {
