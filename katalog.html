@@ -10,37 +10,40 @@
   <style>
     body { font-family: 'Plus Jakarta Sans', sans-serif; background: #F7F7F4; color: #141413; }
     .font-mono { font-family: 'JetBrains Mono', monospace; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
 </head>
 <body class="min-h-screen">
   <header class="bg-white border-b border-neutral-200 sticky top-0 z-20">
-    <div class="max-w-5xl mx-auto px-4 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div class="max-w-5xl mx-auto px-3.5 sm:px-4 py-3.5 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
       <div>
         <div class="flex items-center gap-2">
           <span class="w-2.5 h-2.5 bg-orange-600 inline-block"></span>
           <span class="font-mono text-[10px] uppercase tracking-widest text-neutral-500">Daftar Harga Resmi</span>
         </div>
-        <h1 class="text-xl font-extrabold tracking-tight uppercase mt-0.5">Katalog Harga ATK</h1>
+        <h1 class="text-lg sm:text-xl font-extrabold tracking-tight uppercase mt-0.5">Katalog Harga ATK</h1>
       </div>
       <div class="flex items-center gap-2">
-        <span id="item-count" class="font-mono text-xs bg-neutral-100 border border-neutral-200 px-2.5 py-1 rounded">Memuat...</span>
-        <a href="index.html" class="font-mono text-xs border border-neutral-900 px-3 py-1.5 rounded hover:bg-neutral-900 hover:text-white transition">Login Admin</a>
+        <span id="item-count" class="font-mono text-xs bg-neutral-100 border border-neutral-200 px-2.5 py-1 rounded whitespace-nowrap">Memuat...</span>
+        <a href="index.html" class="font-mono text-xs border border-neutral-900 px-3 py-1.5 rounded hover:bg-neutral-900 hover:text-white transition whitespace-nowrap">Login Admin</a>
       </div>
     </div>
   </header>
 
-  <main class="max-w-5xl mx-auto px-4 py-5 space-y-4">
+  <main class="max-w-5xl mx-auto px-3.5 sm:px-4 py-4 sm:py-5 space-y-3.5 sm:space-y-4">
     <!-- Pencarian & Filter -->
-    <div class="bg-white border border-neutral-200 rounded-xl p-4 space-y-3 shadow-sm">
+    <div class="bg-white border border-neutral-200 rounded-xl p-3.5 sm:p-4 space-y-3 shadow-sm">
       <div class="flex flex-col sm:flex-row gap-2.5">
         <input id="search-input" type="text" placeholder="Cari barang atau kode SKU (misal: hvs f4, pulpen biru, amplop)..."
           class="flex-1 border border-neutral-300 rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:border-orange-600" />
-        <label class="flex items-center gap-2 text-xs font-mono text-neutral-600 px-2 cursor-pointer select-none">
+        <label class="flex items-center gap-2 text-xs font-mono text-neutral-600 px-1 sm:px-2 cursor-pointer select-none whitespace-nowrap">
           <input id="only-priced" type="checkbox" class="w-4 h-4 accent-orange-600" />
           <span>Hanya yang sudah ada harga</span>
         </label>
       </div>
-      <div id="category-chips" class="flex flex-wrap gap-1.5"></div>
+      <!-- Kategori: swipe horizontal di HP, wrap rapi di Desktop -->
+      <div id="category-chips" class="flex flex-nowrap sm:flex-wrap gap-1.5 overflow-x-auto no-scrollbar pb-0.5 sm:pb-0 -mx-1 px-1"></div>
     </div>
 
     <!-- Daftar Barang -->
@@ -70,7 +73,6 @@
         || (typeof SUPABASE_KEY !== 'undefined' ? SUPABASE_KEY : '')
         || cfg.SUPABASE_ANON_KEY || cfg.SUPABASE_KEY || cfg.supabaseAnonKey || cfg.supabaseKey || '';
 
-      // Fallback otomatis: baca URL & anon key langsung dari file config.js
       if (!url || !key) {
         const res = await fetch('config.js', { cache: 'no-store' });
         const txt = await res.text();
@@ -109,7 +111,7 @@
       el.innerHTML = cats.map(c => {
         const active = c === activeCategory;
         return `<button type="button" onclick="setCategory('${esc(c).replace(/'/g, "\\'")}')"
-          class="px-2.5 py-1 rounded-md text-xs font-mono border transition ${active
+          class="shrink-0 whitespace-nowrap px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-md text-xs font-mono border transition ${active
             ? 'bg-neutral-900 text-white border-neutral-900'
             : 'bg-neutral-50 text-neutral-700 border-neutral-200 hover:border-orange-500'}">
           ${c === 'ALL' ? 'Semua Kategori' : esc(c)}
@@ -147,13 +149,13 @@
 
       box.innerHTML = `
         <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse text-sm">
+          <table class="w-full text-left border-collapse text-xs sm:text-sm">
             <thead>
               <tr class="bg-neutral-50 border-b border-neutral-200 font-mono text-[10px] uppercase text-neutral-500">
-                <th class="p-3">SKU & Nama Barang</th>
+                <th class="px-2.5 py-2.5 sm:p-3">SKU & Nama Barang</th>
                 <th class="p-3 hidden sm:table-cell">Kategori</th>
-                <th class="p-3 text-right">Harga Satuan</th>
-                <th class="p-3 text-right">Harga Grosir / Box</th>
+                <th class="px-2.5 py-2.5 sm:p-3 text-right whitespace-nowrap">Harga Satuan</th>
+                <th class="px-2.5 py-2.5 sm:p-3 text-right whitespace-nowrap">Grosir / Box</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-neutral-100">
@@ -162,23 +164,23 @@
                 const hasBig = it.big_unit && Number(it.big_selling_price) > 0;
                 return `
                   <tr class="hover:bg-orange-50/40">
-                    <td class="p-3">
-                      <div class="font-semibold text-neutral-900">${esc(it.name)}</div>
-                      <div class="flex items-center gap-2 mt-0.5 font-mono text-[10px] text-neutral-500">
+                    <td class="px-2.5 py-3 sm:p-3">
+                      <div class="font-semibold text-neutral-900 leading-snug">${esc(it.name)}</div>
+                      <div class="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 mt-0.5 font-mono text-[10px] text-neutral-500">
                         <span>${esc(it.sku)}</span>
                         <span class="sm:hidden">• ${esc(it.category)}</span>
                         ${it.in_stock ? '<span class="text-emerald-700 font-semibold">• Tersedia</span>' : ''}
                       </div>
                     </td>
-                    <td class="p-3 hidden sm:table-cell font-mono text-xs text-neutral-500">${esc(it.category)}</td>
-                    <td class="p-3 text-right font-mono">
-                      <div class="font-bold ${hasPrice ? 'text-neutral-900' : 'text-neutral-400 text-xs'}">${fmtRp(it.selling_price)}</div>
-                      <div class="text-[10px] text-neutral-500">per ${esc(it.unit)}</div>
+                    <td class="p-3 hidden sm:table-cell font-mono text-xs text-neutral-500 whitespace-nowrap">${esc(it.category)}</td>
+                    <td class="px-2.5 py-3 sm:p-3 text-right font-mono whitespace-nowrap align-top">
+                      <div class="font-bold whitespace-nowrap ${hasPrice ? 'text-neutral-900 text-xs sm:text-sm' : 'text-neutral-400 text-[11px] sm:text-xs'}">${fmtRp(it.selling_price)}</div>
+                      <div class="text-[10px] text-neutral-500 whitespace-nowrap">per ${esc(it.unit)}</div>
                     </td>
-                    <td class="p-3 text-right font-mono">
+                    <td class="px-2.5 py-3 sm:p-3 text-right font-mono whitespace-nowrap align-top">
                       ${hasBig
-                        ? `<div class="font-bold text-orange-600">${fmtRp(it.big_selling_price)}</div>
-                           <div class="text-[10px] text-neutral-500">per ${esc(it.big_unit)}${Number(it.big_qty) > 0 ? ` (isi ${it.big_qty})` : ''}</div>`
+                        ? `<div class="font-bold text-orange-600 text-xs sm:text-sm whitespace-nowrap">${fmtRp(it.big_selling_price)}</div>
+                           <div class="text-[10px] text-neutral-500 whitespace-nowrap">per ${esc(it.big_unit)}${Number(it.big_qty) > 0 ? ` (${it.big_qty})` : ''}</div>`
                         : '<span class="text-xs text-neutral-300">—</span>'}
                     </td>
                   </tr>
