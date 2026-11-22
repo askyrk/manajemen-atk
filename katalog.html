@@ -3,46 +3,54 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Katalog Harga ATK</title>
+  <title>Katalog Harga</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" />
   <style>
+    :root { --brand-primary: #EA580C; }
     body { font-family: 'Plus Jakarta Sans', sans-serif; background: #F7F7F4; color: #141413; }
     .font-mono { font-family: 'JetBrains Mono', monospace; }
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .brand-bg { background-color: var(--brand-primary); }
+    .brand-text { color: var(--brand-primary); }
+    .brand-border:focus, .brand-border:hover { border-color: var(--brand-primary); }
+    .brand-accent { accent-color: var(--brand-primary); }
   </style>
 </head>
-<body class="min-h-screen">
+<body class="min-h-screen flex flex-col">
   <header class="bg-white border-b border-neutral-200 sticky top-0 z-20">
     <div class="max-w-5xl mx-auto px-3.5 sm:px-4 py-3.5 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-      <div>
-        <div class="flex items-center gap-2">
-          <span class="w-2.5 h-2.5 bg-orange-600 inline-block"></span>
-          <span class="font-mono text-[10px] uppercase tracking-widest text-neutral-500">Daftar Harga Resmi</span>
+      <div class="flex items-center gap-3">
+        <img id="brand-logo" src="" alt="Logo" class="hidden w-9 h-9 object-contain rounded border border-neutral-200 p-0.5 bg-white shrink-0" />
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 brand-bg inline-block"></span>
+            <span id="brand-eyebrow" class="font-mono text-[10px] uppercase tracking-widest text-neutral-500">Veropsa Supply • Katalog Resmi</span>
+          </div>
+          <h1 id="brand-title" class="text-lg sm:text-xl font-extrabold tracking-tight uppercase mt-0.5">Katalog Harga</h1>
         </div>
-        <h1 class="text-lg sm:text-xl font-extrabold tracking-tight uppercase mt-0.5">Katalog Harga ATK</h1>
       </div>
       <div class="flex items-center gap-2">
         <span id="item-count" class="font-mono text-xs bg-neutral-100 border border-neutral-200 px-2.5 py-1 rounded whitespace-nowrap">Memuat...</span>
-        <a href="index.html" class="font-mono text-xs border border-neutral-900 px-3 py-1.5 rounded hover:bg-neutral-900 hover:text-white transition whitespace-nowrap">Login Admin</a>
+        <a id="btn-wa-admin" href="#" target="_blank" rel="noopener" class="hidden font-mono text-xs bg-emerald-600 text-white px-3 py-1.5 rounded hover:bg-emerald-700 transition whitespace-nowrap">Hubungi WA</a>
+        <a id="btn-login-admin" href="index.html" class="font-mono text-xs border border-neutral-900 px-3 py-1.5 rounded hover:bg-neutral-900 hover:text-white transition whitespace-nowrap">Login Admin</a>
       </div>
     </div>
   </header>
 
-  <main class="max-w-5xl mx-auto px-3.5 sm:px-4 py-4 sm:py-5 space-y-3.5 sm:space-y-4">
+  <main class="max-w-5xl w-full mx-auto px-3.5 sm:px-4 py-4 sm:py-5 space-y-3.5 sm:space-y-4 flex-1">
     <!-- Pencarian & Filter -->
-    <div class="bg-white border border-neutral-200 rounded-xl p-3.5 sm:p-4 space-y-3 shadow-sm">
+    <div id="filter-card" class="bg-white border border-neutral-200 rounded-xl p-3.5 sm:p-4 space-y-3 shadow-sm">
       <div class="flex flex-col sm:flex-row gap-2.5">
         <input id="search-input" type="text" placeholder="Cari barang atau kode SKU (misal: hvs f4, pulpen biru, amplop)..."
-          class="flex-1 border border-neutral-300 rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:border-orange-600" />
+          class="flex-1 border border-neutral-300 rounded-lg px-3.5 py-2.5 text-sm focus:outline-none brand-border" />
         <label class="flex items-center gap-2 text-xs font-mono text-neutral-600 px-1 sm:px-2 cursor-pointer select-none whitespace-nowrap">
-          <input id="only-priced" type="checkbox" class="w-4 h-4 accent-orange-600" />
+          <input id="only-priced" type="checkbox" class="w-4 h-4 brand-accent" />
           <span>Hanya yang sudah ada harga</span>
         </label>
       </div>
-      <!-- Kategori: swipe horizontal di HP, wrap rapi di Desktop -->
       <div id="category-chips" class="flex flex-nowrap sm:flex-wrap gap-1.5 overflow-x-auto no-scrollbar pb-0.5 sm:pb-0 -mx-1 px-1"></div>
     </div>
 
@@ -52,10 +60,15 @@
     </div>
   </main>
 
+  <footer id="veropsa-footer" class="max-w-5xl w-full mx-auto px-4 py-4 text-center font-mono text-[10px] text-neutral-400">
+    Powered by Veropsa Supply
+  </footer>
+
   <script src="config.js"></script>
   <script>
     let allItems = [];
     let activeCategory = 'ALL';
+    let resolvedCompany = null;
 
     const fmtRp = (n) => Number(n) > 0 ? 'Rp ' + Math.round(Number(n)).toLocaleString('id-ID') : 'Hubungi Admin';
     const esc = (s) => String(s || '').replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
@@ -82,18 +95,101 @@
         if (urlMatch) url = urlMatch[0];
         if (keyMatch) key = keyMatch[0];
       }
-
-      if (!url || !key) {
-        throw new Error('URL / Anon Key Supabase tidak ditemukan di config.js');
-      }
+      if (!url || !key) throw new Error('Konfigurasi Supabase tidak ditemukan di config.js');
       return window.supabase.createClient(url, key);
+    }
+
+    function applyTenantBranding(company) {
+      const b = company.branding || {};
+      const f = company.features || {};
+      const isWhiteLabel = Boolean(f.custom_whitelabel);
+
+      const primary = b.primary_color || '#EA580C';
+      document.documentElement.style.setProperty('--brand-primary', primary);
+
+      const name = b.company_name || company.slug || 'Katalog Harga';
+      document.title = `Katalog Harga — ${name}`;
+      document.getElementById('brand-title').textContent = name;
+      document.getElementById('brand-eyebrow').textContent = isWhiteLabel
+        ? (b.app_subtitle || 'Daftar Harga Resmi')
+        : 'Veropsa Supply • Daftar Harga Resmi';
+
+      if (b.logo_url) {
+        const img = document.getElementById('brand-logo');
+        img.src = b.logo_url;
+        img.classList.remove('hidden');
+      }
+
+      if (b.admin_wa) {
+        const cleanWa = String(b.admin_wa).replace(/[^0-9]/g, '').replace(/^0/, '62');
+        if (cleanWa) {
+          const waBtn = document.getElementById('btn-wa-admin');
+          waBtn.href = `https://wa.me/${cleanWa}?text=${encodeURIComponent('Halo, saya ingin menanyakan ketersediaan barang dari katalog.')}`;
+          waBtn.classList.remove('hidden');
+        }
+      }
+
+      if (company.slug) {
+        document.getElementById('btn-login-admin').href = `index.html?c=${encodeURIComponent(company.slug)}`;
+      }
+
+      if (isWhiteLabel) {
+        document.getElementById('veropsa-footer')?.classList.add('hidden');
+      }
+    }
+
+    function showBlockedState(title, message) {
+      document.getElementById('filter-card')?.classList.add('hidden');
+      document.getElementById('item-count').textContent = 'Nonaktif';
+      document.getElementById('catalog-container').innerHTML = `
+        <div class="p-10 text-center space-y-2">
+          <p class="font-bold text-base uppercase text-neutral-900">${esc(title)}</p>
+          <p class="font-mono text-xs text-neutral-500 max-w-md mx-auto">${esc(message)}</p>
+        </div>
+      `;
     }
 
     async function loadCatalog() {
       const box = document.getElementById('catalog-container');
       try {
         const client = await getSupabaseClient();
-        const { data, error } = await client.rpc('get_public_catalog');
+        const params = new URLSearchParams(window.location.search);
+        const slugParam = params.get('c') || params.get('company') || null;
+        const hostDomain = window.location.hostname || null;
+
+        // 1) Resolve tenant via fungsi bersama veropsa_resolve_company
+        const { data: compRes, error: compErr } = await client.rpc('veropsa_resolve_company', {
+          p_slug: slugParam,
+          p_domain: hostDomain
+        });
+
+        if (compErr) throw compErr;
+        const company = Array.isArray(compRes) ? compRes[0] : compRes;
+
+        if (!company || !company.id) {
+          return showBlockedState(
+            'Katalog Perusahaan Tidak Ditemukan',
+            'Pastikan alamat link katalog menyertakan kode perusahaan (?c=slug) atau dibuka lewat subdomain resmi perusahaan.'
+          );
+        }
+
+        resolvedCompany = company;
+        applyTenantBranding(company);
+
+        const feats = company.features || {};
+        const catalogEnabled = Boolean(feats.supply_katalog_publik ?? feats.supply_public_catalog);
+        if (company.status !== 'ACTIVE' || !feats.supply_enabled || !catalogEnabled) {
+          return showBlockedState(
+            'Katalog Publik Tidak Aktif',
+            'Fitur katalog harga publik untuk perusahaan ini sedang dinonaktifkan oleh administrator.'
+          );
+        }
+
+        // 2) Ambil daftar barang milik tenant ini saja
+        const { data, error } = await client.rpc('get_public_catalog', {
+          p_slug: company.slug || slugParam,
+          p_domain: hostDomain
+        });
         if (error) throw error;
 
         allItems = data || [];
@@ -113,7 +209,7 @@
         return `<button type="button" onclick="setCategory('${esc(c).replace(/'/g, "\\'")}')"
           class="shrink-0 whitespace-nowrap px-3 py-1.5 sm:px-2.5 sm:py-1 rounded-md text-xs font-mono border transition ${active
             ? 'bg-neutral-900 text-white border-neutral-900'
-            : 'bg-neutral-50 text-neutral-700 border-neutral-200 hover:border-orange-500'}">
+            : 'bg-neutral-50 text-neutral-700 border-neutral-200 brand-border'}">
           ${c === 'ALL' ? 'Semua Kategori' : esc(c)}
         </button>`;
       }).join('');
@@ -163,7 +259,7 @@
                 const hasPrice = Number(it.selling_price) > 0;
                 const hasBig = it.big_unit && Number(it.big_selling_price) > 0;
                 return `
-                  <tr class="hover:bg-orange-50/40">
+                  <tr class="hover:bg-neutral-50">
                     <td class="px-2.5 py-3 sm:p-3">
                       <div class="font-semibold text-neutral-900 leading-snug">${esc(it.name)}</div>
                       <div class="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 mt-0.5 font-mono text-[10px] text-neutral-500">
@@ -179,7 +275,7 @@
                     </td>
                     <td class="px-2.5 py-3 sm:p-3 text-right font-mono whitespace-nowrap align-top">
                       ${hasBig
-                        ? `<div class="font-bold text-orange-600 text-xs sm:text-sm whitespace-nowrap">${fmtRp(it.big_selling_price)}</div>
+                        ? `<div class="font-bold brand-text text-xs sm:text-sm whitespace-nowrap">${fmtRp(it.big_selling_price)}</div>
                            <div class="text-[10px] text-neutral-500 whitespace-nowrap">per ${esc(it.big_unit)}${Number(it.big_qty) > 0 ? ` (${it.big_qty})` : ''}</div>`
                         : '<span class="text-xs text-neutral-300">—</span>'}
                     </td>
