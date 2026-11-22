@@ -4219,16 +4219,22 @@ function applySupplyFeatureFlagsUI() {
   });
 }
 
-// Preload branding di layar login via ?c=slug atau subdomain (domains.supply)
+// Preload branding di layar login hanya jika ada ?c=slug atau custom domain (bukan default vercel.app)
 async function preloadSupplyBranding() {
   try {
     const params = new URLSearchParams(window.location.search);
+    const slugParam = params.get('c') || params.get('company') || null;
+    const host = (window.location.hostname || '').toLowerCase();
+    const isCustomDomain = host && !host.endsWith('.vercel.app') && host !== 'localhost' && host !== '127.0.0.1';
+
+    if (!slugParam && !isCustomDomain) return;
+
     const { data } = await db.rpc('veropsa_resolve_company', {
-      p_slug: params.get('c') || params.get('company') || null,
-      p_domain: window.location.hostname || null
+      p_slug: slugParam,
+      p_domain: isCustomDomain ? host : null
     });
     const comp = Array.isArray(data) ? data[0] : data;
-    if (comp?.id) {
+    if (comp?.id && comp.features?.supply_enabled) {
       state.preloadedCompany = comp;
       applySupplyBranding(comp);
     }
@@ -4261,10 +4267,11 @@ async function loadActiveSupplyTenant() {
   }
 
   const params = new URLSearchParams(window.location.search);
-  const targetSlug = (params.get('c') || params.get('company') || state.preloadedCompany?.slug || '').toLowerCase();
+  const explicitSlug = (params.get('c') || params.get('company') || '').toLowerCase();
   const host = (window.location.hostname || '').toLowerCase();
 
-  const chosen = roles.find(r => r.companies && targetSlug && String(r.companies.slug || '').toLowerCase() === targetSlug)
+  // Prioritas: 1) ?c=slug eksplisit, 2) custom domain supply, 3) tenant aktif yang punya supply_enabled
+  const chosen = (explicitSlug ? roles.find(r => r.companies && String(r.companies.slug || '').toLowerCase() === explicitSlug) : null)
     || roles.find(r => r.companies && (
       String(r.companies.domains?.supply || '').toLowerCase() === host ||
       String(r.companies.domain || '').toLowerCase() === host
@@ -4286,7 +4293,7 @@ async function loadActiveSupplyTenant() {
     applySupplyBranding(company);
     showSupplyBlockedOverlay(
       'Layanan Veropsa Supply Nonaktif',
-      'Status langganan atau modul Veropsa Supply untuk perusahaan ini sedang dinonaktifkan.'
+      `Modul Veropsa Supply untuk "${company.branding?.company_name || company.slug}" sedang dinonaktifkan.`
     );
     return false;
   }
