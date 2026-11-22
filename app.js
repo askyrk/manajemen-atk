@@ -4088,5 +4088,269 @@ switchTab = function (tabId) {
   if (tabId === 'transactions') injectARFormControls();
   if (tabId === 'recap' && arCanAccess()) loadARData();
 };
+// ==========================================
+// 17. VEROPSA SUPPLY — MULTI-TENANT, BRANDING & FEATURE FLAGS (2 LAPIS)
+// ==========================================
+const SUPPLY_TAB_FLAGS = {
+  stockopname: 'supply_stock_opname',
+  reports:     'supply_kartu_stok',
+  recap:       'supply_rekap_divisi',
+  prices:      'supply_analisa_harga',
+  pricing:     'supply_harga_laba'
+};
+
+function supplyHasFeature(flagKey) {
+  if (!state.company) return true;
+  const f = state.company.features || {};
+  if (flagKey === 'supply_katalog_publik') {
+    return Boolean(f.supply_katalog_publik ?? f.supply_public_catalog);
+  }
+  // Flag tambahan (kartu stok & rekap divisi) default aktif bila belum diset eksplisit
+  if (flagKey === 'supply_kartu_stok' || flagKey === 'supply_rekap_divisi') {
+    return (flagKey in f) ? Boolean(f[flagKey]) : true;
+  }
+  return Boolean(f[flagKey]);
+}
+
+function supplyTabAllowed(tabId) {
+  const reqFlag = SUPPLY_TAB_FLAGS[tabId];
+  return reqFlag ? supplyHasFeature(reqFlag) : true;
+}
+
+function applySupplyBranding(company) {
+  if (!company) return;
+  const b = company.branding || {};
+  const f = company.features || {};
+  const integ = company.integrations || {};
+  const isWhiteLabel = Boolean(f.custom_whitelabel);
+  const primary = b.primary_color || '#EA580C';
+  const name = b.company_name || company.slug || 'Veropsa Supply';
+  const subtitle = b.app_subtitle || 'Manajemen Stok & Operasional';
+
+  // Sinkronkan ke state.settings agar applyWhiteLabel() & upload Drive ikut data companies
+  state.settings = {
+    ...(state.settings || {}),
+    company_name: name,
+    subtitle: subtitle,
+    address: b.address || state.settings?.address || '',
+    gdrive_script_url: integ.supply_drive_webhook || state.settings?.gdrive_script_url || '',
+    gdrive_secret_key: integ.supply_drive_secret || state.settings?.gdrive_secret_key || ''
+  };
+
+  // Warna aksen dinamis dari companies.branding.primary_color
+  document.documentElement.style.setProperty('--brand-primary', primary);
+  let dynStyle = document.getElementById('veropsa-brand-style');
+  if (!dynStyle) {
+    dynStyle = document.createElement('style');
+    dynStyle.id = 'veropsa-brand-style';
+    document.head.appendChild(dynStyle);
+  }
+  dynStyle.textContent = `
+    .text-swiss-red { color: ${primary} !important; }
+    .bg-swiss-red { background-color: ${primary} !important; }
+    .border-swiss-red { border-color: ${primary} !important; }
+    .hover\\:bg-swiss-red:hover { background-color: ${primary} !important; }
+    .hover\\:text-swiss-red:hover { color: ${primary} !important; }
+  `;
+
+  document.title = isWhiteLabel ? `${name} — ${subtitle}` : `${name} • Veropsa Supply`;
+  document.querySelectorAll('.brand-name').forEach(el => el.textContent = name);
+  document.querySelectorAll('.brand-subtitle').forEach(el => el.textContent = subtitle);
+  const loginTitle = document.getElementById('login-company-name');
+  if (loginTitle) loginTitle.textContent = name;
+
+  // Ubah label "WHITE-LABEL ERP" sesuai saklar custom_whitelabel
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    const txt = node.nodeValue.trim();
+    if (/^(WHITE-LABEL ERP|VEROPSA SUPPLY|INVENTORY ERP)$/i.test(txt)) {
+      node.nodeValue = node.nodeValue.replace(txt, isWhiteLabel ? 'INVENTORY ERP' : 'VEROPSA SUPPLY');
+    }
+  }
+}
+
+function showSupplyBlockedOverlay(title, message) {
+  let ov = document.getElementById('veropsa-blocked-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'veropsa-blocked-overlay';
+    ov.className = 'fixed inset-0 z-[9999] bg-[#F7F7F4] flex items-center justify-center p-6';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = `
+    <div class="bg-white border-2 border-neutral-900 max-w-md w-full p-6 text-center space-y-3">
+      <p class="font-mono text-[10px] uppercase tracking-widest text-red-600 font-bold">Akses Dibatasi</p>
+      <h2 class="text-xl font-extrabold uppercase">${escapeHtml(title)}</h2>
+      <p class="font-mono text-xs text-neutral-600">${escapeHtml(message)}</p>
+      <button type="button" onclick="db.auth.signOut().then(() => location.reload())"
+        class="mt-2 bg-neutral-900 text-white px-4 py-2 font-mono text-xs uppercase font-bold">
+        Keluar Akun
+      </button>
+    </div>
+  `;
+}
+
+// Lapis 1: Sembunyikan menu & widget berdasarkan saklar companies.features
+function applySupplyFeatureFlagsUI() {
+  if (!state.company) return;
+
+  document.querySelectorAll('.nav-btn[data-tab]').forEach(btn => {
+    const tabId = btn.dataset.tab;
+    const allowed = supplyTabAllowed(tabId) && (state.profile ? userCanAccessTab(tabId) : true);
+    btn.classList.toggle('hidden', !allowed);
+  });
+
+  // Jika tab yang sedang terbuka ternyata dimatikan, paksa pindah ke Dashboard
+  Object.keys(SUPPLY_TAB_FLAGS).forEach(tabId => {
+    if (!supplyTabAllowed(tabId)) {
+      const sec = document.getElementById(`tab-${tabId}`);
+      if (sec && !sec.classList.contains('hidden')) {
+        switchTab('dashboard');
+      }
+    }
+  });
+
+  // Modul Piutang (supply_piutang)
+  const piutangOn = supplyHasFeature('supply_piutang');
+  ['kpi-ar-card', 'ar-panel-section', 'tx-ar-box'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && !piutangOn) el.classList.add('hidden');
+  });
+}
+
+// Preload branding di layar login via ?c=slug atau subdomain (domains.supply)
+async function preloadSupplyBranding() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const { data } = await db.rpc('veropsa_resolve_company', {
+      p_slug: params.get('c') || params.get('company') || null,
+      p_domain: window.location.hostname || null
+    });
+    const comp = Array.isArray(data) ? data[0] : data;
+    if (comp?.id) {
+      state.preloadedCompany = comp;
+      applySupplyBranding(comp);
+    }
+  } catch (e) {
+    console.warn('[Veropsa Supply] Preload branding dilewati:', e.message);
+  }
+}
+
+// Muat data perusahaan aktif milik user dari user_roles + companies
+async function loadActiveSupplyTenant() {
+  const { data: authData } = await db.auth.getUser();
+  const activeUser = state.user || authData?.user;
+  if (!activeUser) return false;
+  state.user = activeUser;
+
+  const { data: roles, error } = await db
+    .from('user_roles')
+    .select('company_id, role, companies(*)')
+    .eq('user_id', activeUser.id);
+
+  if (error) {
+    console.error('[Veropsa Supply] Error baca user_roles:', error.message);
+    showToast('Gagal memuat data perusahaan: ' + error.message, 'error');
+    return false;
+  }
+
+  if (!roles || roles.length === 0) {
+    showSupplyBlockedOverlay('Akun Belum Terdaftar di Perusahaan', 'Hubungi administrator untuk menautkan akun Anda ke perusahaan aktif.');
+    return false;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const targetSlug = (params.get('c') || params.get('company') || state.preloadedCompany?.slug || '').toLowerCase();
+  const host = (window.location.hostname || '').toLowerCase();
+
+  const chosen = roles.find(r => r.companies && targetSlug && String(r.companies.slug || '').toLowerCase() === targetSlug)
+    || roles.find(r => r.companies && (
+      String(r.companies.domains?.supply || '').toLowerCase() === host ||
+      String(r.companies.domain || '').toLowerCase() === host
+    ))
+    || roles.find(r => r.companies && r.companies.status === 'ACTIVE' && r.companies.features?.supply_enabled)
+    || roles[0];
+
+  const company = chosen?.companies;
+  if (!company) {
+    showSupplyBlockedOverlay('Perusahaan Tidak Ditemukan', 'Data perusahaan untuk akun ini tidak tersedia.');
+    return false;
+  }
+
+  state.company = company;
+  state.companyRole = chosen.role;
+  console.log('[Veropsa Supply] Tenant aktif:', company.slug, '| Features:', company.features);
+
+  if (company.status !== 'ACTIVE' || !company.features?.supply_enabled) {
+    applySupplyBranding(company);
+    showSupplyBlockedOverlay(
+      'Layanan Veropsa Supply Nonaktif',
+      'Status langganan atau modul Veropsa Supply untuk perusahaan ini sedang dinonaktifkan.'
+    );
+    return false;
+  }
+
+  applySupplyBranding(company);
+  return true;
+}
+
+// Hook 1: Pastikan applyWhiteLabel() selalu memprioritaskan companies.branding
+const _origApplyWhiteLabelSupply = applyWhiteLabel;
+applyWhiteLabel = function () {
+  if (state.company) applySupplyBranding(state.company);
+  _origApplyWhiteLabelSupply();
+  if (state.company) applySupplyBranding(state.company);
+};
+
+// Hook 2 (Lapis 2): Blokir akses tab dari userCanAccessTab() — otomatis memblokir sidebar & switchTab()
+const _origUserCanAccessTabSupply = userCanAccessTab;
+userCanAccessTab = function (tabId) {
+  if (!supplyTabAllowed(tabId)) return false;
+  return _origUserCanAccessTabSupply(tabId);
+};
+
+// Hook 3 (Lapis 2): Pesan jelas bila user mencoba panggil switchTab() manual lewat Console
+const _origSwitchTabSupply = switchTab;
+switchTab = function (tabId) {
+  if (!supplyTabAllowed(tabId)) {
+    showToast('Fitur ini tidak aktif pada paket perusahaan Anda.', 'error');
+    return;
+  }
+  _origSwitchTabSupply(tabId);
+  applySupplyFeatureFlagsUI();
+};
+
+// Hook 4 (Lapis 2): Sembunyikan fitur OFF dari Command Palette (Ctrl+K) termasuk untuk Admin
+const _origBuildCmdSupply = buildCommandList;
+buildCommandList = function (query) {
+  const list = _origBuildCmdSupply(query);
+  return list.filter(item => {
+    if (item.group === 'Navigasi Cepat') {
+      const match = ALL_TABS_META.find(t => item.label.startsWith(t.label.substring(0, 2)));
+      return match ? supplyTabAllowed(match.id) : true;
+    }
+    return true;
+  });
+};
+
+// Hook 5 (Lapis 2): Kunci modul Piutang dengan saklar supply_piutang
+const _origArCanAccessSupply = arCanAccess;
+arCanAccess = function () {
+  if (!supplyHasFeature('supply_piutang')) return false;
+  return _origArCanAccessSupply();
+};
+
+// Hook 6: Jalankan loadActiveSupplyTenant() tepat sebelum showApp() berjalan
+const _origShowAppSupply = showApp;
+showApp = async function (...args) {
+  const ok = await loadActiveSupplyTenant();
+  if (!ok) return;
+  await _origShowAppSupply(...args);
+  applySupplyBranding(state.company);
+  applySupplyFeatureFlagsUI();
+};
+
+preloadSupplyBranding();
 // Mulai aplikasi
 checkSession();
