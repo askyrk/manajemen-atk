@@ -3416,7 +3416,7 @@ if (typeof buildCommandList === 'function') {
 
     const input = document.createElement('input');
     input.type = 'text';
-    input.className = (sel.className || 'swiss-input text-xs') + ' ss-input';
+    input.className = (sel.className || 'swiss-input text-xs').replace(/\bcart-item\b/g, '').trim() + ' ss-input';
     input.placeholder = 'Ketik nama / SKU barang...';
     input.autocomplete = 'off';
 
