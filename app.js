@@ -3555,16 +3555,26 @@ function arGetCustomer(tx) {
 }
 
 // 1) Sisipkan pilihan Status Pembayaran & Jatuh Tempo saat memilih STOK KELUAR
+function toggleARFormBox() {
+  const box = document.getElementById('tx-ar-box');
+  const typeSelect = document.getElementById('tx-type');
+  if (!box || !typeSelect) return;
+  const isOut = typeSelect.value === 'OUT';
+  box.classList.toggle('hidden', !isOut || !arCanAccess());
+}
+
 function injectARFormControls() {
   const tabTx = document.getElementById('tab-transactions');
-  if (!tabTx || document.getElementById('tx-ar-box')) return;
+  if (!tabTx) return;
 
-  const selects = Array.from(tabTx.querySelectorAll('select'));
-  const typeSelect = selects.find(s => Array.from(s.options).some(o => o.value === 'OUT'));
+  if (document.getElementById('tx-ar-box')) {
+    toggleARFormBox();
+    return;
+  }
+
+  const typeSelect = document.getElementById('tx-type')
+    || Array.from(tabTx.querySelectorAll('select')).find(s => Array.from(s.options).some(o => o.value === 'OUT'));
   if (!typeSelect) return;
-
-  const form = typeSelect.closest('form');
-  if (!form) return;
 
   const box = document.createElement('div');
   box.id = 'tx-ar-box';
@@ -3583,27 +3593,24 @@ function injectARFormControls() {
     </div>
   `;
 
-  // Letakkan tepat di atas blok daftar barang atau di bawah baris input utama
+  // Sisipkan tepat di bawah baris pertama (Jenis Transaksi / Tanggal / No Bukti)
   const firstGrid = typeSelect.closest('.grid');
   if (firstGrid && firstGrid.parentNode) {
     firstGrid.parentNode.insertBefore(box, firstGrid.nextSibling);
   } else {
-    form.prepend(box);
+    const cartRows = document.getElementById('cart-rows');
+    if (cartRows && cartRows.parentNode) {
+      cartRows.parentNode.insertBefore(box, cartRows);
+    }
   }
 
-  const toggleBox = () => {
-    const isOut = typeSelect.value === 'OUT';
-    box.classList.toggle('hidden', !isOut || !arCanAccess());
-  };
-
-  typeSelect.addEventListener('change', toggleBox);
-  form.addEventListener('reset', () => setTimeout(toggleBox, 30));
-  toggleBox();
+  typeSelect.addEventListener('change', toggleARFormBox);
+  toggleARFormBox();
 }
 
 // 2) Otomatis sisipkan status piutang saat menyimpan transaksi STOK KELUAR
 (function hookARInsert() {
-  if (!window.db || db.__arHooked) return;
+  if (typeof db === 'undefined' || !db || db.__arHooked) return;
   db.__arHooked = true;
   const _origFrom = db.from.bind(db);
   db.from = function (table) {
@@ -3613,13 +3620,17 @@ function injectARFormControls() {
       builder.insert = function (values, options) {
         const statusEl = document.getElementById('tx-ar-status');
         const dueEl = document.getElementById('tx-ar-due-date');
+        const cartTotal = Array.from(document.querySelectorAll('.cart-subtotal'))
+          .reduce((s, el) => s + (Number(el.value) || 0), 0);
+
         const applyRow = (r) => {
           if (r && r.type === 'OUT') {
             const st = statusEl ? statusEl.value : 'UNPAID';
+            const total = Number(r.total_amount || cartTotal || 0);
             return {
               ...r,
               payment_status: st,
-              paid_amount: st === 'PAID' ? Number(r.total_amount || 0) : 0,
+              paid_amount: st === 'PAID' ? total : 0,
               due_date: (st === 'UNPAID' && dueEl && dueEl.value) ? dueEl.value : null
             };
           }
