@@ -2822,7 +2822,7 @@ function initCursorEffects() {
 }
 
 initTheme();
-initCursorEffects();
+// initCursorEffects();
 // ==========================================
 // 13. IKON OTOMATIS & COMMAND PALETTE (CTRL+K)
 // ==========================================
@@ -3497,7 +3497,11 @@ if (typeof buildCommandList === 'function') {
   }
 
   // Pantau otomatis saat baris baru ditambahkan (+ Tambah Baris Barang) atau data selesai dimuat
-  const observer = new MutationObserver(() => scanAndEnhance());
+  let _ssScanTimer = null;
+const observer = new MutationObserver(() => {
+  clearTimeout(_ssScanTimer);
+  _ssScanTimer = setTimeout(scanAndEnhance, 180);
+});
   observer.observe(document.body, { childList: true, subtree: true });
 
   window.addEventListener('resize', () => {
@@ -4432,6 +4436,175 @@ function generateNextSku(categoryId) {
         skuInput.dataset.manualEdit = '1';
       }
     };
+  }
+})();
+// ==========================================
+// 19. OPTIMASI PERFORMA (HEMAT RAM & INTERNET LAMBAT)
+// ==========================================
+window._supplyBooted = false;
+window._itemsRenderLimit = 50;
+
+// 1) Smart Reload: hanya tarik tabel yang relevan dengan tab yang sedang dibuka
+loadAllData = async function (forceFull = false) {
+  try {
+    const isTabOpen = (id) => {
+      const el = document.getElementById(id);
+      return Boolean(el && !el.classList.contains('hidden'));
+    };
+
+    const onTxOrSO = isTabOpen('tab-transactions') || isTabOpen('tab-stockopname');
+    const onItems = isTabOpen('tab-items');
+    const isBoot = !window._supplyBooted || forceFull;
+
+    if (!isBoot && onTxOrSO) {
+      // Hemat bandwidth: simpan/hapus transaksi hanya mengubah stok barang & daftar transaksi
+      const [itemRes, txRes] = await Promise.all([
+        db.from('items').select('*, categories(name), item_units(*)').order('name'),
+        db.from('transactions').select('*, partners(name, type)').order('transaction_date', { ascending: false }).order('created_at', { ascending: false }).limit(120)
+      ]);
+      state.items = itemRes.data || [];
+      state.transactions = txRes.data || [];
+      renderDashboard();
+      renderItemsTable();
+      renderTransactionsTable();
+      return;
+    }
+
+    if (!isBoot && onItems) {
+      // Hemat bandwidth: tambah/edit/import barang tidak perlu menarik ulang transaksi & partner
+      const [catRes, itemRes] = await Promise.all([
+        db.from('categories').select('*').order('name'),
+        db.from('items').select('*, categories(name), item_units(*)').order('name')
+      ]);
+      state.categories = catRes.data || [];
+      state.items = itemRes.data || [];
+      renderDashboard();
+      renderItemsTable();
+      populateDropdowns();
+      return;
+    }
+
+    // Boot awal atau tab Master/Pricing/Settings: tarik lengkap (lewati app_settings jika company sudah termuat)
+    const queries = [
+      state.company ? Promise.resolve({ data: null }) : db.from('app_settings').select('*').eq('id', 1).single(),
+      db.from('categories').select('*').order('name'),
+      db.from('partners').select('*').order('name'),
+      db.from('items').select('*, categories(name), item_units(*)').order('name'),
+      db.from('transactions').select('*, partners(name, type)').order('transaction_date', { ascending: false }).order('created_at', { ascending: false }).limit(120),
+      db.from('partner_prices').select('*, partners(name, type), items(sku, name, base_unit, avg_cost, default_sell_price, item_units(*))').order('updated_at', { ascending: false })
+    ];
+
+    const [setRes, catRes, partRes, itemRes, txRes, ppRes] = await Promise.all(queries);
+    if (setRes.data && !state.company) state.settings = setRes.data;
+    state.categories = catRes.data || [];
+    state.partners = partRes.data || [];
+    state.items = itemRes.data || [];
+    state.transactions = txRes.data || [];
+    state.partnerPrices = ppRes.data || [];
+    window._supplyBooted = true;
+
+    applyWhiteLabel();
+    renderDashboard();
+    renderMasterData();
+    renderItemsTable();
+    renderTransactionsTable();
+    populateDropdowns();
+  } catch (err) {
+    showToast('Gagal memuat data: ' + err.message, 'error');
+  }
+};
+
+// 2) Paginasi 50 baris untuk Master Barang (ringan di RAM)
+renderItemsTable = function () {
+  const q = (document.getElementById('search-item')?.value || '').toLowerCase();
+  const catId = document.getElementById('filter-item-cat')?.value || '';
+
+  const filtered = state.items.filter(i => {
+    const matchText = i.name.toLowerCase().includes(q) || i.sku.toLowerCase().includes(q);
+    const matchCat = !catId || i.category_id === catId;
+    return matchText && matchCat;
+  });
+
+  const tbody = document.getElementById('items-table-body');
+  if (!tbody) return;
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-swiss-muted font-mono">Belum ada data barang.</td></tr>';
+    return;
+  }
+
+  const limit = window._itemsRenderLimit || 50;
+  const visible = filtered.slice(0, limit);
+
+  const rowsHtml = visible.map(i => {
+    const isLow = Number(i.current_stock) <= Number(i.min_stock);
+    const unitsText = (i.item_units || []).map(u => {
+      const pTag = Number(u.sell_price) > 0 ? ` (${formatRupiah(u.sell_price)})` : '';
+      return `1 ${escapeHtml(u.unit_name)} = ${u.conversion_factor} ${escapeHtml(i.base_unit)}${pTag}`;
+    }).join('<br>') || '-';
+    const cost = Number(i.avg_cost) || 0;
+    const sell = Number(i.default_sell_price) || 0;
+    const isLoss = sell > 0 && cost > 0 && sell < cost;
+    const marginPct = sell > 0 && cost > 0 ? (((sell - cost) / sell) * 100).toFixed(1) : null;
+
+    return `
+      <tr class="hover:bg-neutral-50">
+        <td class="p-3 font-mono font-semibold">${escapeHtml(i.sku)}</td>
+        <td class="p-3"><div class="font-semibold">${escapeHtml(i.name)}</div><div class="text-[10px] text-swiss-muted font-mono">${escapeHtml(i.location || '')}</div></td>
+        <td class="p-3">${escapeHtml(i.categories?.name || '-')}</td>
+        <td class="p-3 font-mono font-bold ${isLow ? 'text-swiss-red' : ''}">${formatStockBreakdown(i)}</td>
+        <td class="p-3 font-mono text-[11px] text-swiss-muted">${unitsText}</td>
+        <td class="p-3 font-mono text-[11px]">
+          <div class="text-swiss-muted">HPP: ${formatRupiah(cost)}</div>
+          <div class="font-bold ${isLoss ? 'text-swiss-red' : ''}">
+            Jual: ${sell > 0 ? formatRupiah(sell) : '-'}
+            ${marginPct !== null ? `<span class="text-[10px] font-normal">(${marginPct}%)</span>` : ''}
+          </div>
+          ${isLoss ? '<div class="text-[10px] text-swiss-red font-bold">⚠ JUAL &lt; HPP</div>' : ''}
+        </td>
+        <td class="p-3 text-right space-x-2">
+          <button onclick="openItemModal('${i.id}')" class="font-mono text-[11px] underline">Edit</button>
+          <button onclick="deleteItem('${i.id}', '${escapeHtml(i.name)}')" class="font-mono text-[11px] text-swiss-red underline">Hapus</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  const moreRow = filtered.length > visible.length
+    ? `<tr>
+        <td colspan="7" class="p-3 text-center bg-neutral-50 font-mono text-xs">
+          <span class="text-swiss-muted mr-2">Menampilkan ${visible.length} dari ${filtered.length} barang</span>
+          <button type="button" onclick="window._itemsRenderLimit += 50; renderItemsTable();" class="border border-swiss-ink bg-white px-3 py-1 font-semibold hover:bg-neutral-100">
+            Muat 50 Lagi
+          </button>
+        </td>
+      </tr>`
+    : '';
+
+  tbody.innerHTML = rowsHtml + moreRow;
+};
+
+// 3) Debounce input pencarian Master Barang & Stock Opname agar mengetik tetap mulus
+(function initSearchDebouncers() {
+  const bindDebounce = (elId, fn, resetLimit = false) => {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.removeAttribute('oninput');
+    let timer = null;
+    el.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (resetLimit) window._itemsRenderLimit = 50;
+        if (typeof fn === 'function') fn();
+      }, 200);
+    });
+  };
+
+  bindDebounce('search-item', () => renderItemsTable(), true);
+  bindDebounce('so-search', () => { if (typeof renderSOTable === 'function') renderSOTable(); });
+
+  const catFilter = document.getElementById('filter-item-cat');
+  if (catFilter) {
+    catFilter.addEventListener('change', () => { window._itemsRenderLimit = 50; });
   }
 })();
 // Mulai aplikasi
