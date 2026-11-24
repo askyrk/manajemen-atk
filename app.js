@@ -4370,5 +4370,69 @@ showApp = async function (...args) {
 };
 
 preloadSupplyBranding();
+// ==========================================
+// 18. AUTO-GENERATE KODE SKU BERDASARKAN KATEGORI
+// ==========================================
+function generateNextSku(categoryId) {
+  const cat = (state.categories || []).find(c => String(c.id) === String(categoryId));
+  let prefix = 'BRG';
+  if (cat) {
+    const rawPrefix = (cat.code_prefix || '').trim() || (cat.name || '').replace(/[^a-zA-Z0-9]/g, '').substring(0, 3);
+    if (rawPrefix) prefix = rawPrefix.toUpperCase();
+  }
+
+  const regex = new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)$`, 'i');
+  const usedSkus = new Set((state.items || []).map(i => String(i.sku || '').trim().toUpperCase()));
+
+  let maxNum = 0;
+  usedSkus.forEach(sku => {
+    const m = sku.match(regex);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n > maxNum) maxNum = n;
+    }
+  });
+
+  let nextNum = maxNum + 1;
+  let candidate = `${prefix}-${String(nextNum).padStart(3, '0')}`;
+  while (usedSkus.has(candidate)) {
+    nextNum++;
+    candidate = `${prefix}-${String(nextNum).padStart(3, '0')}`;
+  }
+  return candidate;
+}
+
+(function initAutoSkuGenerator() {
+  const skuInput = document.getElementById('item-sku');
+  const catSelect = document.getElementById('item-category');
+  const idInput = document.getElementById('item-id');
+  if (!skuInput || !catSelect) return;
+
+  // Tandai jika user mengetik SKU manual agar tidak tertimpa saat ganti kategori
+  skuInput.addEventListener('input', () => {
+    skuInput.dataset.manualEdit = skuInput.value.trim() ? '1' : '0';
+  });
+
+  // Update SKU otomatis setiap kali ganti kategori (khusus barang baru)
+  catSelect.addEventListener('change', () => {
+    if (idInput?.value) return;
+    if (skuInput.dataset.manualEdit === '1') return;
+    skuInput.value = generateNextSku(catSelect.value);
+  });
+
+  // Isi SKU otomatis saat modal Tambah Barang Baru dibuka
+  if (typeof openItemModal === 'function') {
+    const _origOpenItemModal = openItemModal;
+    openItemModal = function (itemId = null) {
+      _origOpenItemModal(itemId);
+      if (!itemId) {
+        skuInput.dataset.manualEdit = '0';
+        skuInput.value = generateNextSku(catSelect.value);
+      } else {
+        skuInput.dataset.manualEdit = '1';
+      }
+    };
+  }
+})();
 // Mulai aplikasi
 checkSession();
