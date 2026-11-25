@@ -5116,12 +5116,24 @@ if (typeof showApp === 'function') {
     injectNotaBeliExportBtn();
   };
 }
+
 // ==========================================
 // 22. EDIT TRANSAKSI LANGSUNG (TANPA HAPUS & INPUT ULANG)
 // ==========================================
 window._editingTxId = null;
 window._editingTxOrig = null;
 window._editingOrigCosts = {};
+
+function canEditTransaction() {
+  // 1. Kunci per Klien (Control Plane) — aktifkan flag 'supply_edit_transaksi' di Control Plane
+  if (typeof supplyHasFeature === 'function' && !supplyHasFeature('supply_edit_transaksi')) {
+    return false;
+  }
+  // 2. Kunci per Staf (RBAC) — hanya Super Admin atau staf yang punya izin Hapus Transaksi
+  const p = state.profile;
+  if (!p) return false;
+  return Boolean(p.is_super_admin || p.can_delete_tx);
+}
 
 function ensureEditTxBanner() {
   let banner = document.getElementById('tx-edit-banner');
@@ -5159,6 +5171,10 @@ function syncAllCartSearchInputs() {
 }
 
 async function startEditTransaction(txId) {
+  if (!canEditTransaction()) {
+    return showToast('Anda tidak memiliki izin mengedit transaksi.', 'error');
+  }
+
   const tx = (state.transactions || []).find(t => t.id === txId);
   if (!tx) return showToast('Data transaksi tidak ditemukan.', 'error');
 
@@ -5271,6 +5287,10 @@ function cancelEditTransaction() {
 }
 
 async function updateExistingTransaction(txId) {
+  if (!canEditTransaction()) {
+    return showToast('Anda tidak memiliki izin mengedit transaksi.', 'error');
+  }
+
   const btn = document.getElementById('btn-save-tx');
   const origTx = window._editingTxOrig || {};
   const type = document.getElementById('tx-type').value;
@@ -5397,6 +5417,7 @@ if (typeof renderTransactionsTable === 'function') {
   const _origRenderTxTableEdit = renderTransactionsTable;
   renderTransactionsTable = function () {
     _origRenderTxTableEdit();
+    if (!canEditTransaction()) return;
     document.querySelectorAll('#tx-history-body tr').forEach(tr => {
       const detailBtn = tr.querySelector('button[onclick^="openTxDetail("]');
       if (!detailBtn || tr.querySelector('.btn-edit-tx')) return;
