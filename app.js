@@ -5116,5 +5116,314 @@ if (typeof showApp === 'function') {
     injectNotaBeliExportBtn();
   };
 }
+// ==========================================
+// 22. EDIT TRANSAKSI LANGSUNG (TANPA HAPUS & INPUT ULANG)
+// ==========================================
+window._editingTxId = null;
+window._editingTxOrig = null;
+window._editingOrigCosts = {};
+
+function ensureEditTxBanner() {
+  let banner = document.getElementById('tx-edit-banner');
+  if (banner) return banner;
+
+  const tabTx = document.getElementById('tab-transactions');
+  const firstGrid = document.getElementById('tx-type')?.closest('.grid');
+  if (!tabTx || !firstGrid || !firstGrid.parentNode) return null;
+
+  banner = document.createElement('div');
+  banner.id = 'tx-edit-banner';
+  banner.className = 'hidden flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 mb-4 border-2 border-amber-500 bg-amber-50 text-amber-900 rounded-lg font-mono text-xs';
+  banner.innerHTML = `
+    <div>
+      <span class="px-1.5 py-0.5 bg-amber-500 text-white text-[10px] font-bold uppercase mr-1.5">MODE EDIT</span>
+      <span id="tx-edit-banner-text" class="font-semibold">Sedang mengedit transaksi...</span>
+    </div>
+    <button type="button" onclick="cancelEditTransaction()" class="border border-amber-700 bg-white text-amber-900 px-3 py-1 text-[11px] font-bold hover:bg-amber-100 self-start sm:self-auto">
+      ✕ Batal Edit
+    </button>
+  `;
+  firstGrid.parentNode.insertBefore(banner, firstGrid);
+  return banner;
+}
+
+function syncAllCartSearchInputs() {
+  document.querySelectorAll('.cart-row').forEach(row => {
+    const sel = row.querySelector('select.cart-item');
+    const ssInput = row.querySelector('.ss-input');
+    if (sel && ssInput) {
+      const chosen = sel.options[sel.selectedIndex];
+      ssInput.value = (chosen && chosen.value) ? chosen.textContent.trim() : '';
+    }
+  });
+}
+
+async function startEditTransaction(txId) {
+  const tx = (state.transactions || []).find(t => t.id === txId);
+  if (!tx) return showToast('Data transaksi tidak ditemukan.', 'error');
+
+  showToast('Memuat rincian nota untuk diedit...');
+  const { data: details, error } = await db
+    .from('transaction_items')
+    .select('*')
+    .eq('transaction_id', txId)
+    .order('created_at', { ascending: true });
+
+  if (error) return showToast('Gagal memuat rincian nota: ' + error.message, 'error');
+
+  window._editingTxId = txId;
+  window._editingTxOrig = tx;
+  window._editingOrigCosts = {};
+  (details || []).forEach(d => {
+    if (Number(d.cost_price) > 0) window._editingOrigCosts[d.item_id] = Number(d.cost_price);
+  });
+
+  // Isi header transaksi
+  document.getElementById('tx-type').value = tx.type || 'IN';
+  onTxTypeChange();
+  document.getElementById('tx-date').value = (tx.transaction_date || '').substring(0, 10);
+  document.getElementById('tx-ref').value = tx.reference_no || '';
+  document.getElementById('tx-partner').value = tx.partner_id || '';
+  document.getElementById('tx-notes').value = tx.notes || '';
+  document.getElementById('tx-receipt-file').value = '';
+
+  // Isi field Piutang & Ongkir jika transaksi KELUAR
+  if (typeof injectARFormControls === 'function') injectARFormControls();
+  if (typeof injectShippingControls === 'function') injectShippingControls();
+
+  const arStatusEl = document.getElementById('tx-ar-status');
+  const arDueEl = document.getElementById('tx-ar-due-date');
+  if (arStatusEl) arStatusEl.value = tx.payment_status === 'PAID' ? 'PAID' : 'UNPAID';
+  if (arDueEl) arDueEl.value = tx.due_date ? String(tx.due_date).substring(0, 10) : '';
+
+  const shipCostEl = document.getElementById('tx-shipping-cost');
+  const shipNoteEl = document.getElementById('tx-shipping-note');
+  if (shipCostEl) shipCostEl.value = Number(tx.shipping_cost) || 0;
+  if (shipNoteEl) shipNoteEl.value = tx.shipping_note || '';
+
+  if (typeof toggleARFormBox === 'function') toggleARFormBox();
+  if (typeof toggleShippingFormBox === 'function') toggleShippingFormBox();
+
+  // Isi ulang seluruh baris keranjang barang
+  const container = document.getElementById('cart-rows');
+  container.innerHTML = '';
+
+  if (!details || details.length === 0) {
+    addCartRow();
+  } else {
+    details.forEach(d => {
+      addCartRow();
+      const row = container.lastElementChild;
+      if (!row) return;
+
+      const sel = row.querySelector('select.cart-item');
+      sel.value = d.item_id || '';
+      onCartItemChange(row.id);
+
+      const qtyInput = row.querySelector('.cart-qty');
+      qtyInput.value = d.input_qty ?? d.base_qty ?? 1;
+
+      const unitSel = row.querySelector('.cart-unit');
+      const factor = Number(d.conversion_factor) || 1;
+      const unitName = d.input_unit || 'PCS';
+      const targetVal = `${factor}|${unitName}`;
+      if (!Array.from(unitSel.options).some(o => o.value === targetVal)) {
+        const opt = document.createElement('option');
+        opt.value = targetVal;
+        opt.textContent = `${unitName} (x${factor})`;
+        unitSel.appendChild(opt);
+      }
+      unitSel.value = targetVal;
+
+      // Set subtotal terakhir agar tidak tertimpa auto-fill harga
+      row.querySelector('.cart-subtotal').value = Math.round(Number(d.subtotal) || 0);
+    });
+  }
+
+  recalcGrandTotal();
+  setTimeout(syncAllCartSearchInputs, 260);
+
+  // Tampilkan banner Mode Edit & ubah teks tombol simpan
+  const banner = ensureEditTxBanner();
+  if (banner) {
+    document.getElementById('tx-edit-banner-text').textContent =
+      `Mengedit nota ${tx.reference_no} (${(tx.transaction_date || '').substring(0, 10)}) — foto nota lama & cicilan tetap aman.`;
+    banner.classList.remove('hidden');
+  }
+  const saveBtn = document.getElementById('btn-save-tx');
+  if (saveBtn) saveBtn.textContent = 'Simpan Perubahan Nota';
+
+  document.getElementById('tab-transactions')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelEditTransaction() {
+  window._editingTxId = null;
+  window._editingTxOrig = null;
+  window._editingOrigCosts = {};
+
+  document.getElementById('tx-edit-banner')?.classList.add('hidden');
+  const saveBtn = document.getElementById('btn-save-tx');
+  if (saveBtn) saveBtn.textContent = 'Simpan Transaksi';
+
+  document.getElementById('tx-date').value = new Date().toISOString().split('T')[0];
+  onTxTypeChange();
+  resetCart();
+}
+
+async function updateExistingTransaction(txId) {
+  const btn = document.getElementById('btn-save-tx');
+  const origTx = window._editingTxOrig || {};
+  const type = document.getElementById('tx-type').value;
+  const txDate = document.getElementById('tx-date').value;
+  const refNo = document.getElementById('tx-ref').value.trim();
+  const partnerId = document.getElementById('tx-partner').value || null;
+  const notes = document.getElementById('tx-notes').value.trim();
+  const receiptFiles = Array.from(document.getElementById('tx-receipt-file').files || []);
+
+  if (!txDate || !refNo) {
+    return showToast('Tanggal dan No. Bukti wajib diisi.', 'error');
+  }
+
+  const rows = Array.from(document.querySelectorAll('.cart-row'));
+  const itemsPayload = [];
+  for (const r of rows) {
+    const itemId = r.querySelector('select.cart-item').value;
+    const inputQty = Number(r.querySelector('.cart-qty').value);
+    const [factorStr, inputUnit] = r.querySelector('.cart-unit').value.split('|');
+    const factor = Number(factorStr) || 1;
+    const subtotal = Number(r.querySelector('.cart-subtotal').value) || 0;
+
+    if (!itemId) continue;
+    if (!inputQty || (type !== 'ADJUSTMENT' && inputQty <= 0)) {
+      return showToast('Qty harus lebih dari 0 (kecuali Stock Opname boleh negatif).', 'error');
+    }
+
+    const baseQty = inputQty * factor;
+    const unitPrice = baseQty !== 0 ? subtotal / Math.abs(baseQty) : 0;
+    const itemObj = state.items.find(i => i.id === itemId);
+    const prevCost = window._editingOrigCosts[itemId];
+    const lockedCost = type === 'OUT' ? (prevCost || Number(itemObj?.avg_cost) || 0) : unitPrice;
+
+    itemsPayload.push({
+      transaction_id: txId,
+      transaction_type: type,
+      item_id: itemId,
+      input_qty: inputQty,
+      input_unit: inputUnit,
+      conversion_factor: factor,
+      base_qty: baseQty,
+      unit_price: unitPrice,
+      cost_price: lockedCost,
+      subtotal
+    });
+  }
+
+  if (itemsPayload.length === 0) {
+    return showToast('Pilih minimal 1 barang di daftar keranjang.', 'error');
+  }
+
+  btn.disabled = true;
+
+  try {
+    // Pertahankan foto nota lama, tambahkan jika ada upload foto baru
+    const existingUrls = parseReceiptUrls(origTx.receipt_url);
+    if (receiptFiles.length > 0) {
+      for (let i = 0; i < receiptFiles.length; i++) {
+        btn.textContent = `Mengupload foto baru ${i + 1}/${receiptFiles.length}...`;
+        const suffix = `_${existingUrls.length + i + 1}`;
+        const url = await uploadReceiptToDrive(receiptFiles[i], txDate, refNo, suffix);
+        existingUrls.push(url);
+      }
+    }
+    const finalReceiptUrl = existingUrls.length > 0 ? existingUrls.join(' | ') : null;
+
+    btn.textContent = 'Menyimpan perubahan...';
+    const grandTotal = itemsPayload.reduce((s, p) => s + p.subtotal, 0);
+
+    const txUpdate = {
+      reference_no: refNo,
+      transaction_date: txDate,
+      type,
+      partner_id: partnerId,
+      receipt_url: finalReceiptUrl,
+      notes
+    };
+
+    if (type === 'OUT') {
+      const shipCost = Math.max(0, Number(document.getElementById('tx-shipping-cost')?.value) || 0);
+      const shipNote = (document.getElementById('tx-shipping-note')?.value || '').trim() || (shipCost > 0 ? 'GRAB' : '');
+      txUpdate.shipping_cost = shipCost;
+      txUpdate.shipping_note = shipNote;
+
+      const arStatusEl = document.getElementById('tx-ar-status');
+      const arDueEl = document.getElementById('tx-ar-due-date');
+      if (arStatusEl) {
+        const st = arStatusEl.value;
+        txUpdate.payment_status = st;
+        txUpdate.due_date = (st === 'UNPAID' && arDueEl?.value) ? arDueEl.value : null;
+        if (st === 'PAID') txUpdate.paid_amount = grandTotal;
+      }
+    }
+
+    // 1. Update header transaksi (foto nota & cicilan piutang tetap terjaga)
+    const { error: txErr } = await db.from('transactions').update(txUpdate).eq('id', txId);
+    if (txErr) throw txErr;
+
+    // 2. Hapus rincian lama (trigger otomatis mengembalikan stok & HPP)
+    const { error: delErr } = await db.from('transaction_items').delete().eq('transaction_id', txId);
+    if (delErr) throw delErr;
+
+    // 3. Simpan rincian baru (trigger otomatis menghitung ulang stok & HPP)
+    const { error: insErr } = await db.from('transaction_items').insert(itemsPayload);
+    if (insErr) throw insErr;
+
+    showToast(`Perubahan nota ${refNo} berhasil disimpan!`);
+    cancelEditTransaction();
+    await loadAllData();
+    if (typeof loadARData === 'function' && typeof arCanAccess === 'function' && arCanAccess()) {
+      await loadARData();
+    }
+  } catch (err) {
+    showToast('Gagal menyimpan perubahan: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    if (!window._editingTxId) btn.textContent = 'Simpan Transaksi';
+    else btn.textContent = 'Simpan Perubahan Nota';
+  }
+}
+
+// Sisipkan tombol "Edit" di sebelah "Detail / Cetak" pada tabel Riwayat Transaksi
+if (typeof renderTransactionsTable === 'function') {
+  const _origRenderTxTableEdit = renderTransactionsTable;
+  renderTransactionsTable = function () {
+    _origRenderTxTableEdit();
+    document.querySelectorAll('#tx-history-body tr').forEach(tr => {
+      const detailBtn = tr.querySelector('button[onclick^="openTxDetail("]');
+      if (!detailBtn || tr.querySelector('.btn-edit-tx')) return;
+      const match = (detailBtn.getAttribute('onclick') || '').match(/openTxDetail\('([^']+)'\)/);
+      if (!match) return;
+
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn-edit-tx font-mono text-[11px] font-semibold underline text-amber-600';
+      editBtn.textContent = 'Edit';
+      editBtn.onclick = () => startEditTransaction(match[1]);
+
+      detailBtn.parentNode.insertBefore(editBtn, detailBtn);
+      detailBtn.parentNode.insertBefore(document.createTextNode(' '), detailBtn);
+    });
+  };
+}
+
+// Arahkan tombol Simpan Transaksi ke fungsi update jika sedang dalam Mode Edit
+if (typeof saveTransaction === 'function') {
+  const _origSaveTransactionEdit = saveTransaction;
+  saveTransaction = async function () {
+    if (window._editingTxId) {
+      return updateExistingTransaction(window._editingTxId);
+    }
+    return _origSaveTransactionEdit();
+  };
+}
 // Mulai aplikasi
 checkSession();
