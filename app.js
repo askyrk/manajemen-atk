@@ -4607,5 +4607,330 @@ renderItemsTable = function () {
     catFilter.addEventListener('change', () => { window._itemsRenderLimit = 50; });
   }
 })();
+// ==========================================
+// 20. ONGKIR PER NOTA & EXPORT REKAP LEMBAGA (.XLSX)
+// ==========================================
+function toggleShippingFormBox() {
+  const box = document.getElementById('tx-shipping-box');
+  const typeSelect = document.getElementById('tx-type');
+  if (!box || !typeSelect) return;
+  box.classList.toggle('hidden', typeSelect.value !== 'OUT');
+}
+
+function injectShippingControls() {
+  const tabTx = document.getElementById('tab-transactions');
+  if (!tabTx) return;
+  if (document.getElementById('tx-shipping-box')) {
+    toggleShippingFormBox();
+    return;
+  }
+
+  const typeSelect = document.getElementById('tx-type');
+  if (!typeSelect) return;
+
+  const box = document.createElement('div');
+  box.id = 'tx-shipping-box';
+  box.className = 'hidden grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 border border-swiss-line bg-neutral-50 rounded-lg my-3';
+  box.innerHTML = `
+    <div>
+      <label class="block font-mono text-[10px] uppercase mb-1 text-swiss-muted">Ongkir / Biaya Kirim (Rp) — Opsional</label>
+      <input type="number" id="tx-shipping-cost" min="0" step="any" value="0" placeholder="0" class="swiss-input text-xs font-mono font-semibold" />
+    </div>
+    <div>
+      <label class="block font-mono text-[10px] uppercase mb-1 text-swiss-muted">Keterangan Ongkir / Kurir</label>
+      <input type="text" id="tx-shipping-note" placeholder="Misal: GRAB / GoSend / Kurir" class="swiss-input text-xs" />
+    </div>
+  `;
+
+  const arBox = document.getElementById('tx-ar-box');
+  const firstGrid = typeSelect.closest('.grid');
+  if (arBox && arBox.parentNode) {
+    arBox.parentNode.insertBefore(box, arBox.nextSibling);
+  } else if (firstGrid && firstGrid.parentNode) {
+    firstGrid.parentNode.insertBefore(box, firstGrid.nextSibling);
+  }
+
+  typeSelect.addEventListener('change', toggleShippingFormBox);
+  toggleShippingFormBox();
+}
+
+// Sisipkan otomatis shipping_cost & shipping_note saat simpan transaksi STOK KELUAR
+(function hookShippingInsert() {
+  if (typeof db === 'undefined' || !db || db.__shippingHooked) return;
+  db.__shippingHooked = true;
+  const _prevFrom = db.from.bind(db);
+  db.from = function (table) {
+    const builder = _prevFrom(table);
+    if (table === 'transactions') {
+      const _prevInsert = builder.insert.bind(builder);
+      builder.insert = function (values, options) {
+        const costEl = document.getElementById('tx-shipping-cost');
+        const noteEl = document.getElementById('tx-shipping-note');
+        const applyRow = (r) => {
+          if (r && r.type === 'OUT') {
+            const shipCost = Math.max(0, Number(costEl?.value) || 0);
+            const shipNote = (noteEl?.value || '').trim() || (shipCost > 0 ? 'GRAB' : '');
+            return { ...r, shipping_cost: shipCost, shipping_note: shipNote };
+          }
+          return r;
+        };
+        const patched = Array.isArray(values) ? values.map(applyRow) : applyRow(values);
+        return _prevInsert(patched, options);
+      };
+    }
+    return builder;
+  };
+})();
+
+function formatTanggalIndo(isoStr) {
+  if (!isoStr) return '';
+  const parts = String(isoStr).substring(0, 10).split('-');
+  if (parts.length !== 3) return isoStr;
+  const bulan = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+  const mIdx = parseInt(parts[1], 10) - 1;
+  return `${parseInt(parts[2], 10)} ${bulan[mIdx] || parts[1]} ${parts[0]}`;
+}
+
+function sanitizeSheetName(name, usedNames) {
+  let clean = String(name || 'UMUM').replace(/[\\/?*[\]:]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+  if (!clean) clean = 'UMUM';
+  clean = clean.substring(0, 31);
+  let candidate = clean;
+  let n = 2;
+  while (usedNames.has(candidate)) {
+    const suffix = ` (${n++})`;
+    candidate = clean.substring(0, 31 - suffix.length) + suffix;
+  }
+  usedNames.add(candidate);
+  return candidate;
+}
+
+function injectLembagaExportBtn() {
+  const recapTab = document.getElementById('tab-recap');
+  if (!recapTab || document.getElementById('btn-export-lembaga-xlsx')) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'btn-export-lembaga-xlsx';
+  btn.type = 'button';
+  btn.onclick = exportRekapLembagaXLSX;
+  btn.className = 'bg-swiss-ink text-white px-3 py-2 text-xs font-mono font-semibold hover:bg-swiss-red transition-colors';
+  btn.textContent = '↓ Export Rekap Lembaga (.xlsx)';
+
+  const csvBtn = recapTab.querySelector('button[onclick*="exportRecapCSV"]');
+  if (csvBtn && csvBtn.parentNode) {
+    csvBtn.parentNode.insertBefore(btn, csvBtn.nextSibling);
+  } else {
+    const header = recapTab.firstElementChild;
+    if (header) header.appendChild(btn);
+  }
+}
+
+async function exportRekapLembagaXLSX() {
+  if (typeof XLSX === 'undefined') {
+    return showToast('Library Excel (XLSX) belum termuat.', 'error');
+  }
+
+  const btn = document.getElementById('btn-export-lembaga-xlsx');
+  if (btn) { btn.disabled = true; btn.textContent = 'Menyiapkan Excel...'; }
+
+  try {
+    const mode = document.getElementById('recap-period-mode')?.value || 'MONTH';
+    const monthVal = document.getElementById('recap-month')?.value || new Date().toISOString().substring(0, 7);
+
+    let query = db
+      .from('transactions')
+      .select('*, partners(id, name, type), transaction_items(*, items(sku, name, base_unit, avg_cost)), transaction_payments(payment_date, amount)')
+      .eq('type', 'OUT')
+      .order('transaction_date', { ascending: true })
+      .order('created_at', { ascending: true });
+
+    if (mode === 'MONTH' && monthVal) {
+      const [y, m] = monthVal.split('-');
+      const lastDay = new Date(Number(y), Number(m), 0).getDate();
+      query = query
+        .gte('transaction_date', `${monthVal}-01`)
+        .lte('transaction_date', `${monthVal}-${String(lastDay).padStart(2, '0')}`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const txList = (data || []).filter(tx => (tx.transaction_items || []).length > 0);
+    if (txList.length === 0) {
+      return showToast('Tidak ada transaksi keluar pada periode ini.', 'error');
+    }
+
+    // Kelompokkan nota berdasarkan Lembaga / Customer
+    const groups = new Map();
+    txList.forEach(tx => {
+      const name = tx.partners?.name || 'UMUM';
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name).push(tx);
+    });
+
+    const wb = XLSX.utils.book_new();
+    const usedSheetNames = new Set(['RINGKASAN']);
+    const summaryRows = [
+      ['REKAP PESANAN LEMBAGA', mode === 'MONTH' ? `Periode: ${monthVal}` : 'Periode: Semua'],
+      [],
+      ['No.', 'Nama Lembaga / Customer', 'Jumlah Nota', 'Total Omzet (Rp)', 'Total HPP (Rp)', 'Laba Kotor (Rp)', 'Total Ongkir (Rp)', 'Laba Bersih (Rp)']
+    ];
+
+    const detailSheets = [];
+    let grandOmzet = 0, grandHpp = 0, grandOngkir = 0, grandNota = 0;
+
+    Array.from(groups.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .forEach(([lembagaName, txs], idxLembaga) => {
+        const aoa = [];
+        let sumOmzet = 0, sumHpp = 0, sumOngkir = 0;
+
+        txs.forEach(tx => {
+          // Tentukan tanggal pembayaran otomatis dari status piutang / cicilan
+          const pays = [...(tx.transaction_payments || [])].sort((a, b) => (a.payment_date || '').localeCompare(b.payment_date || ''));
+          let tglBayar = '';
+          if (tx.payment_status === 'PAID') {
+            const lastPayDate = pays.length > 0 ? pays[pays.length - 1].payment_date : tx.transaction_date;
+            tglBayar = formatTanggalIndo(lastPayDate);
+          } else if (tx.payment_status === 'PARTIAL' && pays.length > 0) {
+            tglBayar = `Sebagian (${formatTanggalIndo(pays[pays.length - 1].payment_date)})`;
+          }
+
+          aoa.push(['Tanggal pemesanan', ':', '', '', '', 'PIC:', '', '']);
+          aoa.push(['Tanggal pengiriman', ':', formatTanggalIndo(tx.transaction_date), '', '', 'No. Bukti:', tx.reference_no || '', '']);
+          aoa.push(['Tanggal pembayaran', ':', tglBayar, '', '', '', '', '']);
+          aoa.push([]);
+          aoa.push(['No.', 'Nama Barang', 'Vol', 'Satuan', 'Harga Jual', 'Jumlah Jual', 'Harga HPP', 'Jumlah HPP']);
+
+          let notaJual = 0;
+          let notaHpp = 0;
+
+          (tx.transaction_items || []).forEach((d, idx) => {
+            const item = d.items || {};
+            const vol = Number(d.input_qty) || Math.abs(Number(d.base_qty) || 0);
+            const satuan = d.input_unit || item.base_unit || 'PCS';
+            const jumlahJual = Math.round(Number(d.subtotal) || 0);
+            const hargaJual = vol > 0 ? Math.round(jumlahJual / vol) : 0;
+
+            const unitCostBase = Number(d.cost_price) > 0 ? Number(d.cost_price) : (Number(item.avg_cost) || 0);
+            const baseQty = Math.abs(Number(d.base_qty) || (vol * (Number(d.conversion_factor) || 1)));
+            const jumlahHpp = Math.round(baseQty * unitCostBase);
+            const hargaHpp = vol > 0 ? Math.round(jumlahHpp / vol) : 0;
+
+            notaJual += jumlahJual;
+            notaHpp += jumlahHpp;
+
+            aoa.push([idx + 1, item.name || '-', vol, satuan, hargaJual, jumlahJual, hargaHpp, jumlahHpp]);
+          });
+
+          const labaKotor = notaJual - notaHpp;
+          const ongkir = Math.round(Number(tx.shipping_cost) || 0);
+          const ongkirLabel = (tx.shipping_note || '').trim() || 'GRAB';
+          const labaBersih = labaKotor - ongkir;
+
+          sumOmzet += notaJual;
+          sumHpp += notaHpp;
+          sumOngkir += ongkir;
+
+          aoa.push(['', 'JUMLAH', '', '', '', notaJual, '', notaHpp]);
+          aoa.push(['', '', '', '', '', '', 'Laba Kotor', labaKotor]);
+          aoa.push(['', '', '', '', '', '', ongkirLabel, ongkir]);
+          aoa.push(['', '', '', '', '', '', 'Laba Bersih', labaBersih]);
+          aoa.push([]);
+          aoa.push([]);
+        });
+
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        ws['!cols'] = [
+          { wch: 20 }, { wch: 36 }, { wch: 18 }, { wch: 10 },
+          { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 16 }
+        ];
+        // Format ribuan pada seluruh sel angka di kolom E..H
+        Object.keys(ws).forEach(addr => {
+          if (addr.startsWith('!')) return;
+          const col = addr.replace(/\d+/g, '');
+          if (['E', 'F', 'G', 'H'].includes(col) && typeof ws[addr].v === 'number') {
+            ws[addr].z = '#,##0';
+          }
+        });
+
+        const sheetName = sanitizeSheetName(lembagaName, usedSheetNames);
+        detailSheets.push({ sheetName, ws });
+
+        const sumKotor = sumOmzet - sumHpp;
+        const sumBersih = sumKotor - sumOngkir;
+        grandOmzet += sumOmzet;
+        grandHpp += sumHpp;
+        grandOngkir += sumOngkir;
+        grandNota += txs.length;
+
+        summaryRows.push([idxLembaga + 1, lembagaName, txs.length, sumOmzet, sumHpp, sumKotor, sumOngkir, sumBersih]);
+      });
+
+    const grandKotor = grandOmzet - grandHpp;
+    summaryRows.push(['', 'TOTAL KESELURUHAN', grandNota, grandOmzet, grandHpp, grandKotor, grandOngkir, grandKotor - grandOngkir]);
+
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+    wsSummary['!cols'] = [
+      { wch: 6 }, { wch: 32 }, { wch: 13 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }
+    ];
+    Object.keys(wsSummary).forEach(addr => {
+      if (addr.startsWith('!')) return;
+      const col = addr.replace(/\d+/g, '');
+      if (['D', 'E', 'F', 'G', 'H'].includes(col) && typeof wsSummary[addr].v === 'number') {
+        wsSummary[addr].z = '#,##0';
+      }
+    });
+
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'RINGKASAN');
+    detailSheets.forEach(s => XLSX.utils.book_append_sheet(wb, s.ws, s.sheetName));
+
+    const label = mode === 'MONTH' ? monthVal : 'Semua_Periode';
+    XLSX.writeFile(wb, `Rekap_Pesanan_Lembaga_${label}.xlsx`);
+    showToast(`Berhasil export ${detailSheets.length} sheet lembaga!`);
+  } catch (err) {
+    showToast('Gagal export Excel: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '↓ Export Rekap Lembaga (.xlsx)'; }
+  }
+}
+
+// Kaitkan ke resetCart, onTxTypeChange, switchTab, dan showApp
+if (typeof resetCart === 'function') {
+  const _origResetCartShip = resetCart;
+  resetCart = function () {
+    _origResetCartShip();
+    const costEl = document.getElementById('tx-shipping-cost');
+    const noteEl = document.getElementById('tx-shipping-note');
+    if (costEl) costEl.value = '0';
+    if (noteEl) noteEl.value = '';
+  };
+}
+
+if (typeof onTxTypeChange === 'function') {
+  const _origOnTxTypeShip = onTxTypeChange;
+  onTxTypeChange = function () {
+    _origOnTxTypeShip();
+    toggleShippingFormBox();
+  };
+}
+
+if (typeof switchTab === 'function') {
+  const _origSwitchTabShip = switchTab;
+  switchTab = function (tabId) {
+    _origSwitchTabShip(tabId);
+    if (tabId === 'transactions') injectShippingControls();
+    if (tabId === 'recap') injectLembagaExportBtn();
+  };
+}
+
+if (typeof showApp === 'function') {
+  const _origShowAppShip = showApp;
+  showApp = async function (...args) {
+    await _origShowAppShip(...args);
+    injectShippingControls();
+    injectLembagaExportBtn();
+  };
+}
 // Mulai aplikasi
 checkSession();
