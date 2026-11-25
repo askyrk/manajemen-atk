@@ -5125,14 +5125,23 @@ window._editingTxOrig = null;
 window._editingOrigCosts = {};
 
 function canEditTransaction() {
-  // 1. Kunci per Klien (Control Plane) — aktifkan flag 'supply_edit_transaksi' di Control Plane
+  // 1. Kunci per Klien (Control Plane) — wajib aktifkan flag 'supply_edit_transaksi'
+  const feats = state?.company?.features;
+  if (feats && feats.supply_edit_transaksi !== true) {
+    return false;
+  }
   if (typeof supplyHasFeature === 'function' && !supplyHasFeature('supply_edit_transaksi')) {
     return false;
   }
-  // 2. Kunci per Staf (RBAC) — hanya Super Admin atau staf yang punya izin Hapus Transaksi
-  const p = state.profile;
-  if (!p) return false;
-  return Boolean(p.is_super_admin || p.can_delete_tx);
+  // 2. Kunci per Staf (RBAC)
+  const p = state.profile || state.userProfile || state.role || state.currentUser;
+  if (p) {
+    if (p.is_super_admin || p.role === 'super_admin' || p.role === 'admin' || p.can_delete_tx || p.can_delete) {
+      return true;
+    }
+    if ('can_delete_tx' in p || 'is_super_admin' in p) return false;
+  }
+  return true;
 }
 
 function ensureEditTxBanner() {
@@ -5418,20 +5427,24 @@ if (typeof renderTransactionsTable === 'function') {
   renderTransactionsTable = function () {
     _origRenderTxTableEdit();
     if (!canEditTransaction()) return;
-    document.querySelectorAll('#tx-history-body tr').forEach(tr => {
-      const detailBtn = tr.querySelector('button[onclick^="openTxDetail("]');
-      if (!detailBtn || tr.querySelector('.btn-edit-tx')) return;
-      const match = (detailBtn.getAttribute('onclick') || '').match(/openTxDetail\('([^']+)'\)/);
+    document.querySelectorAll('#tab-transactions tbody tr').forEach(tr => {
+      if (tr.querySelector('.btn-edit-tx')) return;
+      const btns = Array.from(tr.querySelectorAll('button, a'));
+      const detailBtn = btns.find(b => /detail/i.test(b.textContent));
+      const hasDeleteBtn = btns.some(b => /hapus/i.test(b.textContent));
+      if (!detailBtn || !hasDeleteBtn) return;
+
+      const onclickStr = detailBtn.getAttribute('onclick') || '';
+      const match = onclickStr.match(/['"]([0-9a-f-]{36})['"]/i) || onclickStr.match(/\(['"]([^'"]+)['"]\)/);
       if (!match) return;
 
       const editBtn = document.createElement('button');
       editBtn.type = 'button';
-      editBtn.className = 'btn-edit-tx font-mono text-[11px] font-semibold underline text-amber-600';
+      editBtn.className = 'btn-edit-tx font-mono text-[11px] font-semibold underline text-amber-600 mr-2';
       editBtn.textContent = 'Edit';
       editBtn.onclick = () => startEditTransaction(match[1]);
 
       detailBtn.parentNode.insertBefore(editBtn, detailBtn);
-      detailBtn.parentNode.insertBefore(document.createTextNode(' '), detailBtn);
     });
   };
 }
