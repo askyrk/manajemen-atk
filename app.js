@@ -4932,5 +4932,189 @@ if (typeof showApp === 'function') {
     injectLembagaExportBtn();
   };
 }
+// ==========================================
+// 21. EXPORT REKAP NOTA PEMBELIAN (.XLSX) — AUTO MERGE TANGGAL & TOKO
+// ==========================================
+function formatTanggalIndoPad(isoStr) {
+  if (!isoStr) return '';
+  const parts = String(isoStr).substring(0, 10).split('-');
+  if (parts.length !== 3) return isoStr;
+  const bulan = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+  const mIdx = parseInt(parts[1], 10) - 1;
+  return `${String(parts[2]).padStart(2, '0')} ${bulan[mIdx] || parts[1]} ${parts[0]}`;
+}
+
+function injectNotaBeliExportBtn() {
+  const recapTab = document.getElementById('tab-recap');
+  if (!recapTab || document.getElementById('btn-export-nota-beli-xlsx')) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'btn-export-nota-beli-xlsx';
+  btn.type = 'button';
+  btn.onclick = exportRekapNotaBeliXLSX;
+  btn.className = 'border border-swiss-ink bg-white text-swiss-ink px-3 py-2 text-xs font-mono font-semibold hover:bg-neutral-100 transition-colors';
+  btn.textContent = '↓ Export Rekap Nota Beli (.xlsx)';
+
+  const anchor = document.getElementById('btn-export-lembaga-xlsx')
+    || recapTab.querySelector('button[onclick*="exportRecapCSV"]');
+  if (anchor && anchor.parentNode) {
+    anchor.parentNode.insertBefore(btn, anchor.nextSibling);
+  } else {
+    recapTab.firstElementChild?.appendChild(btn);
+  }
+}
+
+async function exportRekapNotaBeliXLSX() {
+  if (typeof XLSX === 'undefined') {
+    return showToast('Library Excel (XLSX) belum termuat.', 'error');
+  }
+
+  const btn = document.getElementById('btn-export-nota-beli-xlsx');
+  if (btn) { btn.disabled = true; btn.textContent = 'Menyiapkan Excel...'; }
+
+  try {
+    const mode = document.getElementById('recap-period-mode')?.value || 'MONTH';
+    const monthVal = document.getElementById('recap-month')?.value || new Date().toISOString().substring(0, 7);
+
+    let query = db
+      .from('transactions')
+      .select('id, reference_no, transaction_date, created_at, partner_id, partners(name), transaction_items(input_qty, input_unit, base_qty, subtotal, items(name, base_unit))')
+      .eq('type', 'IN')
+      .order('transaction_date', { ascending: true })
+      .order('created_at', { ascending: true });
+
+    if (mode === 'MONTH' && monthVal) {
+      const [y, m] = monthVal.split('-');
+      const lastDay = new Date(Number(y), Number(m), 0).getDate();
+      query = query
+        .gte('transaction_date', `${monthVal}-01`)
+        .lte('transaction_date', `${monthVal}-${String(lastDay).padStart(2, '0')}`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    // Urutkan per tanggal ASC, lalu rapatkan transaksi dari toko yang sama pada tanggal yang sama
+    const txList = (data || [])
+      .filter(tx => (tx.transaction_items || []).length > 0)
+      .sort((a, b) => {
+        const dCmp = (a.transaction_date || '').localeCompare(b.transaction_date || '');
+        if (dCmp !== 0) return dCmp;
+        const pA = (a.partners?.name || 'ZZZ').toLowerCase();
+        const pB = (b.partners?.name || 'ZZZ').toLowerCase();
+        if (pA !== pB) return pA.localeCompare(pB);
+        return (a.created_at || '').localeCompare(b.created_at || '');
+      });
+
+    if (txList.length === 0) {
+      return showToast('Tidak ada transaksi pembelian (STOK MASUK) pada periode ini.', 'error');
+    }
+
+    const tahunLabel = mode === 'MONTH' && monthVal ? monthVal.split('-')[0] : new Date().getFullYear();
+    const titleText = `REKAP NOTA ${tahunLabel} (ATK)`;
+
+    const aoa = [
+      [titleText, '', '', '', '', '', ''],
+      ['Tanggal', 'Nama Barang', 'Volume', 'Satuan', 'Harga', 'Jumlah', 'TOKO']
+    ];
+
+    let grandTotal = 0;
+    const flatRows = [];
+
+    txList.forEach(tx => {
+      const tglLabel = formatTanggalIndoPad(tx.transaction_date);
+      const tokoName = (tx.partners?.name || '').trim() || '-';
+
+      (tx.transaction_items || []).forEach(d => {
+        const item = d.items || {};
+        const vol = Number(d.input_qty) || Math.abs(Number(d.base_qty) || 0);
+        const satuan = String(d.input_unit || item.base_unit || 'pcs').toLowerCase();
+        const jumlah = Math.round(Number(d.subtotal) || 0);
+        const harga = vol > 0 ? Math.round(jumlah / vol) : 0;
+
+        grandTotal += jumlah;
+        flatRows.push({ tgl: tglLabel, toko: tokoName });
+        aoa.push([tglLabel, item.name || '-', vol, satuan, harga, jumlah, tokoName]);
+      });
+    });
+
+    aoa.push(['', 'TOTAL PEMBELIAN', '', '', '', grandTotal, '']);
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [
+      { wch: 18 }, // Tanggal
+      { wch: 38 }, // Nama Barang
+      { wch: 10 }, // Volume
+      { wch: 10 }, // Satuan
+      { wch: 16 }, // Harga
+      { wch: 18 }, // Jumlah
+      { wch: 24 }  // TOKO
+    ];
+
+    // Auto-merge judul (A1:G1), kolom Tanggal (A), dan kolom TOKO (G) yang berurutan sama
+    const merges = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];
+    const startRow = 2; // Data dimulai di index 2 (baris 3 Excel)
+
+    const addColumnMerges = (colIdx, key) => {
+      let runStart = 0;
+      for (let i = 1; i <= flatRows.length; i++) {
+        const same = i < flatRows.length
+          && flatRows[i][key] === flatRows[runStart][key]
+          && flatRows[runStart][key] !== ''
+          && flatRows[runStart][key] !== '-';
+        if (!same) {
+          if (i - 1 > runStart) {
+            merges.push({
+              s: { r: startRow + runStart, c: colIdx },
+              e: { r: startRow + i - 1, c: colIdx }
+            });
+          }
+          runStart = i;
+        }
+      }
+    };
+
+    addColumnMerges(0, 'tgl');
+    addColumnMerges(6, 'toko');
+    ws['!merges'] = merges;
+
+    // Format Rupiah di kolom E (Harga) dan F (Jumlah)
+    Object.keys(ws).forEach(addr => {
+      if (addr.startsWith('!')) return;
+      const col = addr.replace(/\d+/g, '');
+      if ((col === 'E' || col === 'F') && typeof ws[addr].v === 'number') {
+        ws[addr].z = '"Rp "#,##0';
+      }
+    });
+
+    const wb = XLSX.utils.book_new();
+    const sheetLabel = mode === 'MONTH' && monthVal ? `REKAP_${monthVal}` : `REKAP_${tahunLabel}`;
+    XLSX.utils.book_append_sheet(wb, ws, sheetLabel.substring(0, 31));
+
+    const fileSuffix = mode === 'MONTH' && monthVal ? monthVal : 'Semua_Periode';
+    XLSX.writeFile(wb, `Rekap_Nota_Pembelian_${fileSuffix}.xlsx`);
+    showToast(`Berhasil export ${flatRows.length} baris rekap pembelian!`);
+  } catch (err) {
+    showToast('Gagal export rekap pembelian: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '↓ Export Rekap Nota Beli (.xlsx)'; }
+  }
+}
+
+if (typeof switchTab === 'function') {
+  const _origSwitchTabNotaBeli = switchTab;
+  switchTab = function (tabId) {
+    _origSwitchTabNotaBeli(tabId);
+    if (tabId === 'recap') injectNotaBeliExportBtn();
+  };
+}
+
+if (typeof showApp === 'function') {
+  const _origShowAppNotaBeli = showApp;
+  showApp = async function (...args) {
+    await _origShowAppNotaBeli(...args);
+    injectNotaBeliExportBtn();
+  };
+}
 // Mulai aplikasi
 checkSession();
