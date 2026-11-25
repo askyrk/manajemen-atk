@@ -5459,5 +5459,163 @@ if (typeof saveTransaction === 'function') {
     return _origSaveTransactionEdit();
   };
 }
+
+// ==========================================
+// 23. REFERENSI HARGA JUAL TERAKHIR DI MODAL EDIT BARANG
+// ==========================================
+function findItemModalAndSellInput() {
+  const modal = document.getElementById('item-modal')
+    || document.getElementById('modal-item')
+    || Array.from(document.querySelectorAll('.fixed')).find(el => /HARGA\s*&\s*KALKULATOR MARGIN/i.test(el.textContent));
+  if (!modal) return { modal: null, sellInput: null, anchor: null };
+
+  let sellInput = modal.querySelector('#item-default-sell-price, #item-sell-price');
+  if (!sellInput) {
+    const lbl = Array.from(modal.querySelectorAll('label')).find(l => /harga jual standar/i.test(l.textContent));
+    if (lbl) sellInput = lbl.parentElement?.querySelector('input');
+  }
+  const anchor = sellInput ? sellInput.closest('.grid') : null;
+  return { modal, sellInput, anchor };
+}
+
+function ensureItemPriceRefBox() {
+  const { anchor } = findItemModalAndSellInput();
+  if (!anchor || !anchor.parentNode) return null;
+
+  let box = document.getElementById('item-sell-price-ref-box');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'item-sell-price-ref-box';
+    box.className = 'hidden mt-3 p-3 rounded-lg border border-neutral-200 bg-neutral-50 text-xs';
+    anchor.parentNode.insertBefore(box, anchor.nextSibling);
+  }
+  return box;
+}
+
+window.applyRefSellPrice = function (priceVal) {
+  const { sellInput } = findItemModalAndSellInput();
+  if (!sellInput) return;
+  sellInput.value = Math.round(Number(priceVal) || 0);
+  sellInput.dispatchEvent(new Event('input', { bubbles: true }));
+  sellInput.dispatchEvent(new Event('change', { bubbles: true }));
+  showToast(`Harga jual diisi ${formatRupiah(priceVal)}`);
+};
+
+async function loadItemSellPriceHistory(itemId) {
+  const box = ensureItemPriceRefBox();
+  if (!box) return;
+
+  if (!itemId) {
+    box.classList.add('hidden');
+    box.innerHTML = '';
+    return;
+  }
+
+  box.classList.remove('hidden');
+  box.innerHTML = `
+    <div class="font-mono text-[10px] uppercase tracking-wider text-neutral-500">
+      Memuat referensi harga jual dari nota sebelumnya...
+    </div>
+  `;
+
+  try {
+    const { data, error } = await db
+      .from('transaction_items')
+      .select('input_qty, input_unit, conversion_factor, base_qty, unit_price, subtotal, created_at, transactions!inner(reference_no, transaction_date, type, partners(name))')
+      .eq('item_id', itemId)
+      .eq('transactions.type', 'OUT')
+      .order('created_at', { ascending: false })
+      .limit(15);
+
+    if (error) throw error;
+
+    const itemObj = (state.items || []).find(i => i.id === itemId);
+    const baseUnit = itemObj?.base_unit || 'PCS';
+
+    const rows = (data || [])
+      .sort((a, b) => {
+        const dA = a.transactions?.transaction_date || '';
+        const dB = b.transactions?.transaction_date || '';
+        if (dA !== dB) return dB.localeCompare(dA);
+        return (b.created_at || '').localeCompare(a.created_at || '');
+      })
+      .slice(0, 5);
+
+    if (rows.length === 0) {
+      box.innerHTML = `
+        <div class="font-mono text-[10px] uppercase tracking-wider text-neutral-500 mb-1">
+          Referensi Harga Jual Nota Sebelumnya
+        </div>
+        <div class="text-[11px] text-neutral-500 italic">
+          Belum ada riwayat transaksi penjualan (Stok Keluar) untuk barang ini.
+        </div>
+      `;
+      return;
+    }
+
+    const listHtml = rows.map(r => {
+      const tx = r.transactions || {};
+      const tgl = (tx.transaction_date || '').substring(0, 10);
+      const partner = tx.partners?.name || 'Umum';
+      const qty = Number(r.input_qty) || Math.abs(Number(r.base_qty) || 1);
+      const unit = r.input_unit || baseUnit;
+      const factor = Number(r.conversion_factor) || 1;
+      const subtotal = Number(r.subtotal) || 0;
+      const pricePerInputUnit = qty > 0 ? Math.round(subtotal / qty) : Math.round(Number(r.unit_price) || 0);
+      const pricePerBase = Math.round(
+        Number(r.unit_price) > 0
+          ? Number(r.unit_price)
+          : (Math.abs(Number(r.base_qty)) > 0 ? subtotal / Math.abs(Number(r.base_qty)) : pricePerInputUnit / factor)
+      );
+
+      const unitNote = factor > 1
+        ? `<span class="text-neutral-500">(${formatRupiah(pricePerInputUnit)}/${escapeHtml(unit)})</span>`
+        : '';
+
+      return `
+        <div class="flex items-center justify-between gap-2 py-1.5 border-t border-neutral-200 first:border-t-0">
+          <div class="min-w-0">
+            <div class="font-medium text-neutral-800 truncate">${escapeHtml(partner)}</div>
+            <div class="font-mono text-[10px] text-neutral-500">${escapeHtml(tgl)} • ${escapeHtml(tx.reference_no || '-')}</div>
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <div class="text-right font-mono">
+              <div class="font-bold text-neutral-900">${formatRupiah(pricePerBase)}<span class="font-normal text-[10px] text-neutral-500">/${escapeHtml(baseUnit)}</span></div>
+              ${unitNote ? `<div class="text-[10px]">${unitNote}</div>` : ''}
+            </div>
+            <button type="button" onclick="applyRefSellPrice(${pricePerBase})" class="px-2 py-1 text-[10px] font-mono font-semibold border border-neutral-800 bg-white hover:bg-neutral-900 hover:text-white rounded transition-colors">
+              Pakai
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    box.innerHTML = `
+      <div class="flex items-center justify-between mb-1.5">
+        <span class="font-mono text-[10px] uppercase tracking-wider font-semibold text-neutral-600">
+          Referensi Harga Jual Terakhir (Nota Keluar)
+        </span>
+        <span class="font-mono text-[10px] text-neutral-400">5 terakhir</span>
+      </div>
+      <div>${listHtml}</div>
+    `;
+  } catch (err) {
+    box.innerHTML = `
+      <div class="font-mono text-[10px] text-red-600">
+        Gagal memuat referensi harga: ${escapeHtml(err.message)}
+      </div>
+    `;
+  }
+}
+
+if (typeof openItemModal === 'function') {
+  const _origOpenItemModalRef = openItemModal;
+  openItemModal = function (itemId = null) {
+    const res = _origOpenItemModalRef(itemId);
+    setTimeout(() => loadItemSellPriceHistory(itemId), 40);
+    return res;
+  };
+}
 // Mulai aplikasi
 checkSession();
